@@ -134,7 +134,28 @@ really was.
   cyberpunk theme, per the user's ask to let players pick a team name + colour.
 - `collapse.py` — `resolve_move`: the collapse engine. **Measurement only happens
   on collision** — `RELOCATE`/`MERGE` (empty square, or the mover's own ghost)
-  skip straight to a plain `apply_move`, no dice involved. Any move that touches
+  skip straight to a plain `apply_move`, no dice involved, **except a pawn
+  landing on the promotion rank while it's still just a ghost** (added
+  2026-07-11, per the user: "when a pawn reaches a homerun and if he is just a
+  ghost, collide his function immediately. If present, he will be promoted. If
+  absent, his problem"). `_resolve_promotion_relocate` relocates the ghost
+  first (via `apply_move` with `promotion` stripped, so the deterministic part
+  still goes through the normal no-dice path), then measures that one ghost
+  against its own probability exactly like a mover's self-check on a
+  `CAPTURE_SOLID`/`CONTACT` move: really there ⇒ `_collapse_positive` (confirm
+  solid, drop every sibling) then apply the promotion; not there ⇒
+  `_collapse_negative` (collapse mode applies to whatever siblings remain), no
+  promotion — the piece just stays a pawn wherever it ends up. A fully solid
+  pawn (`prob == 1`, no siblings) has nothing left to measure and promotes
+  exactly as before, no dice drawn. Logged as a `CollapseEvent` with role
+  `"promotion"`, wired into the UI the same way a `"mover"`/`"split"`
+  self-measurement is (`ui/animation.py`'s `_solidify` matches it by piece, and
+  `ui/skins/hud.py`'s glitch overlay treats a negative promotion roll as a
+  whole-board glitch, not a minor aside — it's the climactic moment of the
+  turn same as a fizzled mover). Covered by
+  `tests/test_m3_collapse.py::test_ghost_pawn_promotion_*` /
+  `test_solid_pawn_promotion_relocate_is_still_unmeasured`. 128 tests passing.
+  Any move that touches
   another piece (`CAPTURE_SOLID` or `CONTACT`) measures the mover first (positive
   ⇒ solid, drop siblings; negative ⇒ fizzle + apply collapse mode) — **this
   applies even when capturing a certain/solid piece**: a superposed mover isn't
@@ -182,14 +203,28 @@ really was.
   check" plus a warning before a move exposes their own king). Purely
   informational — no rule impact (see locked decision above). Headless, exact
   `Fraction`s, **no RNG** (it's the *expected* danger, not a rolled outcome).
-  Metric = **aggregate danger** (chosen with the user via `AskUserQuestion`):
-  every enemy capturing attempt against a king is one *threat* with success
-  probability `p_i`, and `check_probability(qb, color) = 1 − ∏(1 − p_i)` (chance
-  at least one lands, threats treated as independent — a mild overestimate since
-  the enemy really gets one move, but the agreed simple model). A single
-  threat's `p` = (attacker ghost `prob`) × ∏(each *other* piece's ghost on the
-  path is absent, `1 − prob`) × (king ghost `prob` on the targeted square).
-  Threats are enumerated by **reusing `rules.ghost_destinations`** for every
+  Metric = **aggregate danger, conditioned on the king's location** (chosen
+  with the user via `AskUserQuestion`; the location-conditioning refined
+  2026-07-11 after a playtest where a superposed king cornered on *every* square
+  it could occupy still read a spurious `7/9` instead of a certain check). The
+  king is in exactly **one** of its ghost squares — mutually exclusive locations
+  whose weights `q_s` (the king ghost `prob`s) sum to 1 — so:
+  `check_probability(qb, color) = Σ_s q_s · (1 − ∏(1 − a_i) over threats on s)`.
+  Here `a_i` is one threat's **attacker-side** success probability = (attacker
+  ghost `prob`) × ∏(each *other* piece's ghost on the path is absent, `1 − prob`)
+  — it **no longer** includes the king ghost's own `prob`; that factor is now the
+  mutually-exclusive location weight `q_s` instead. Within a fixed king square the
+  distinct enemy attackers are still combined `1 − ∏(1 − a_i)` (independent, a
+  mild overestimate — the enemy really gets one move — but the agreed simple
+  model); averaging *across* squares with the true weights `q_s` is what makes a
+  fully-covered king read `1`. **The old flat `1 − ∏(1 − p_i)` over all threats
+  (with `p_i = a_i · q_s` folded in) was the bug**: it treated the king's own
+  presence on different squares as independent Bernoullis and under-reported when
+  several king ghosts were threatened at once. `Threat` now carries `prob` (=`a_i`,
+  attacker-side) and `king_prob` (=`q_s`) as separate fields; `check_probability`
+  groups threats by `king_square` before weighting. Existing solid-king /
+  single-exposed-ghost cases are numerically unchanged (only *multiply*-threatened
+  superposed kings differ). Threats are enumerated by **reusing `rules.ghost_destinations`** for every
   enemy ghost and keeping the moves whose `to_square` holds a king ghost — so it
   automatically tracks whatever the engine can actually capture (incl. quirks
   like a pawn's forward-push CONTACT capture onto a *superposed* king; solid
@@ -386,6 +421,39 @@ really was.
     save/load/captured/check (reachable any time, not gated on whose turn it
     is or game-over). A display preference, like `show_captured`/
     `show_check` — untouched by `new_game`/`load_from`.
+    **In-game Settings** (added 2026-07-11, user asked to be able to change
+    colours/team name etc. mid-match instead of only pre-game): `open_settings()`
+    reopens `ui/menu.py`'s `Menu` (see its own entry below) as a full-screen
+    overlay, constructed with `in_game=True, initial_config=self.config` so it
+    opens pre-filled with the match's *current* dials/theme/names/colours
+    rather than the last saved team file. `self.in_settings`/`self.settings_menu`
+    gate everything: `draw()` renders `self.settings_menu.draw()` instead of
+    the skin entirely while open (same "takes over the whole window" pattern
+    as the pre-game menu, not squeezed into the side panel), and `run()`
+    routes `MOUSEBUTTONDOWN` to `_handle_settings_click` instead of
+    `handle_mouse_down` whenever `in_settings`. `handle_keydown` special-cases
+    `in_settings` up front: `Escape` closes Settings and discards every edit
+    (`self.config` is untouched until a button is actually clicked), `F11`
+    still toggles fullscreen, anything else forwards to
+    `self.settings_menu.handle_keydown` (so the team-name text fields keep
+    working) — normal game hotkeys (`M`/`C`/`K`/...) don't fire while the
+    screen is open. Reachable via a "Settings (O)" panel button (hit-tested
+    like `view`/`quit`, so it isn't gated on whose turn it is or game-over
+    either) or the **O** key; both routes go through `open_settings()`, which
+    is a no-op mid-animation (same guard as Save/Load) so a collapse reveal
+    can't be interrupted. `_handle_settings_click` reads the `(action, config)`
+    tuple `Menu.handle_click` now returns (see `menu.py` below) and always
+    calls `theme.apply_theme(...)` for the edited config, then branches:
+    `"resume"` just swaps in `self.config` and logs "Settings updated." —
+    `qb`/turn/log/mode are left completely alone, so changing a team's colour
+    mid-game doesn't cost either player their position; `"new_game"` calls
+    `new_game(config)` — `App.new_game` gained an optional `config` param for
+    this (previously always reseeded the rng randomly while keeping whatever
+    config was already set, which is still exactly what the no-arg post-win
+    "New Game (N)" button/key do; passed a config, it instead adopts it and
+    seeds the rng from `config.seed`, deterministic like a menu-driven start)
+    — resets the board with the edited dials, exactly like starting over from
+    the pre-game menu.
   - `skins/` — one drawing language per view (board + panel), see
     `UI_REDESIGN.md` for the full design history. Started 2026-07-11 as a
     3-variant live-switching demo (`demo_ui.py`, a separate script) to
@@ -435,6 +503,24 @@ really was.
     (`Menu._swap_teams`) — since white always moves first, this is how
     players pick who starts without retyping both names. Added 2026-07-11
     per the user's ask for a way to switch who starts.
+    **Reused mid-game as the Settings screen** (added 2026-07-11, see
+    `app.py`'s in-game Settings writeup above): `Menu.__init__` gained
+    `in_game: bool = False` and `initial_config: Optional[GameConfig] = None`.
+    `initial_config`, when given, seeds every field from it instead of
+    calling `_load_teams(startup=True)` — Settings opens showing the match's
+    own current dials, not the last saved team file. `in_game` draws the
+    title as "Settings" instead of "Match Setup" and adds a `resume_rect`
+    button ("Resume Game") beside the existing Start button (relabeled "New
+    Game"); pre-game (`in_game=False`) `resume_rect` is `None` and Start stays
+    the single centered button, unchanged. `handle_click`'s return type
+    changed from a bare `GameConfig` to `(action, GameConfig)` — `"start"`
+    pre-game, `"new_game"`/`"resume"` mid-game depending which of the two
+    buttons fired — so a caller can tell "reset the board" apart from "just
+    apply these settings" (`main.py`'s pre-game loop unpacks and ignores the
+    action, since it's always `"start"` there). Both branches build the
+    `GameConfig` via a new `_build_config()` helper factored out of the old
+    inline Start-button construction, so Start/New-Game/Resume all stay
+    perfectly consistent with each other.
   - Collapse animation plays on the board (see `animation.py`/`render.draw_beat`
     above): movement slides out first, then each measurement flashes green/red
     with fading ghosts, capture shatters and a floating caption. Per-beat
@@ -466,7 +552,7 @@ really was.
 - Demo (M1 random game): `python demo_m1.py [seed]`
 - Demo (M2 superposition): `python demo_m2.py`
 - Demo (M3 collapse): `python demo_m3.py [seed]` — try seeds 1-5, each gives a different outcome
-- Tests: `python -m pytest -q`  (119 passing). UI tests need `SDL_VIDEODRIVER=dummy` in
+- Tests: `python -m pytest -q`  (137 passing). UI tests need `SDL_VIDEODRIVER=dummy` in
   the environment (set automatically at the top of `test_m4_ui.py`, but harmless to
   also export it yourself: `SDL_VIDEODRIVER=dummy python -m pytest -q`).
 - `HOW_TO_PLAY.md` (repo root) — player-facing rules/controls guide for the user and their friend.
@@ -654,7 +740,38 @@ really was.
       the full mechanism (`split_destination_castle_rook`, the
       classify-before-`has_moved` ordering fix, and the `resolve_move`-mirroring
       "rook follows only if that branch's walk completes" rule). 124 tests
-      passing.
+      passing. Later 2026-07-11, promotion for a still-superposed pawn was
+      tightened: a quiet push onto the promotion rank used to promote a mere
+      *ghost* pawn unconditionally (per the original PLAN.md spec, "a pawn
+      ghost reaching the last rank promotes that ghost") — the user asked for
+      that ghost to instead be measured on the spot: really there promotes it,
+      not there is "its problem" (no promotion; ordinary collapse-mode
+      bookkeeping applies to whatever siblings remain). See `collapse.py`'s
+      `_resolve_promotion_relocate` writeup above. A fully solid pawn is
+      unaffected (nothing left to measure, no dice drawn). 128 tests passing.
+      Later 2026-07-11, the pre-game `Menu` was reused mid-game as an
+      **in-game Settings screen** (user asked to be able to change colours/
+      team name/etc. mid-match, or start over, without quitting to the
+      pre-game menu) — see `app.py`'s in-game Settings and `menu.py`'s
+      "reused mid-game" writeups above for the full mechanism
+      (`App.open_settings`/`_handle_settings_click`, `Menu(in_game=True,
+      initial_config=...)`, `Menu.handle_click`'s `(action, config)` return,
+      `App.new_game` gaining an optional `config` param). Reachable via a
+      "Settings (O)" panel button (added to both `HudSkin`/`ClaritySkin`
+      panel layouts, pushing their threat/king-safety modules down to make
+      room) or the **O** key; **Escape** backs out without applying anything,
+      same contract as everywhere else Escape appears. 135 tests passing.
+      Later 2026-07-11, the advisory check metric was **conditioned on the
+      king's location** (see `check.py` above) after a playtest where a
+      superposed king cornered on every square it could occupy still read `7/9`
+      instead of a certain check: a king 2/3 on e7 + 1/3 on g8, both under a
+      guaranteed capture, gave the old flat `1 − ∏(1 − p_i)` its
+      `1 − (1/3)(2/3) = 7/9` because it treated the king's own presence on
+      different squares as *independent* Bernoullis. The king is in exactly one
+      place, so danger now partitions by king-ghost square (mutually exclusive,
+      weights sum to 1) and averages `q_s · (1 − ∏(1 − a_i))` — the cornered
+      king now correctly reads `1`. Solid-king / single-exposed-ghost cases are
+      numerically unchanged. 137 tests passing.
 - [ ] **M5** — (menu dials already landed in M4; this milestone folds into it —
       remaining polish items only, e.g. richer dial explanations in-menu).
 - [ ] **M6** — polish pass (see below for what's left).

@@ -306,6 +306,7 @@ def panel_rects():
         "captured": pygame.Rect(panel_x + 20, 200, 240, 32),
         "check": pygame.Rect(panel_x + 20, 236, 240, 32),
         "quit": pygame.Rect(panel_x + 20, 272, 240, 32),
+        "settings": pygame.Rect(panel_x + 20, 308, 240, 32),
         "new_game": pygame.Rect(panel_x + 20, theme.WINDOW_H - 100, 220, 48),
     }
 

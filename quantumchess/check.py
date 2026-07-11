@@ -8,24 +8,32 @@ PLAN.md / CLAUDE.md). Nothing here changes that: this module is a purely
     "How likely is it that the enemy could capture this king on their very
      next move, given that both the king and any attacker may be superposed?"
 
-Metric (chosen with the user): **aggregate danger**. Every distinct enemy
-capturing attempt against the king is one *threat* with a success probability
-``p_i``; the reported check probability is::
+Metric (chosen with the user): **aggregate danger**, computed by *conditioning
+on where the king actually is*. The king occupies exactly **one** of its ghost
+squares -- those locations are mutually exclusive, with weights (the ghost
+``prob`` values) that sum to 1. So the reported check probability is::
 
-    1 - prod(1 - p_i)   over all threats
+    sum over king squares s of  q_s * ( 1 - prod(1 - a_i)  over threats on s )
 
-i.e. the chance that *at least one* threat lands, treating threats as
-independent. The true danger is a little lower (the enemy actually gets only
-one move, and some threats are mutually exclusive), but independence is the
-agreed, simple, explainable model.
+where ``q_s`` is the king ghost's probability of *being* on ``s`` and ``a_i`` is
+the *attacker-side* success probability of one threat aimed at ``s`` (does **not**
+include the king's own presence -- that is already accounted for by ``q_s``).
+``1 - prod(1 - a_i)`` is the chance at least one attacker lands *given the king
+is on ``s``*, treating the distinct enemy attackers as independent (a mild
+overestimate, the agreed simple model). Averaging over ``s`` with the true,
+mutually-exclusive weights ``q_s`` is what makes a fully-covered king read as a
+certain (``1``) check rather than being spuriously discounted -- the old
+``1 - prod(1 - p_i)`` over *all* threats treated the king's own location on
+different squares as independent Bernoullis and under-reported when several of
+its ghosts were simultaneously threatened (a superposed king cornered on every
+square it could be on is dead for certain, and now shows it).
 
-A single threat's probability is the product of the pieces that must "line up"
-for that capture to happen:
+An attacker-side threat probability ``a_i`` is the product of the pieces that
+must "line up" for that capture to happen, *excluding* the king:
 
-* the attacker ghost must materialise on its square  (its ``prob``),
+* the attacker ghost must materialise on its square  (its ``prob``), and
 * every *other* piece's ghost sitting between it and the king must be **absent**
-  (``1 - prob`` each -- if present it would block or be captured first), and
-* the king ghost must materialise on the targeted square  (its ``prob``).
+  (``1 - prob`` each -- if present it would block or be captured first).
 
 Solid blockers never appear as "between" ghosts: python-chess ``attacks`` over
 the solid board already refuses to generate a ray through a solid piece, so
@@ -50,11 +58,19 @@ from .rules import Move
 
 @dataclass(frozen=True)
 class Threat:
-    """One enemy capturing attempt against a single king ghost."""
+    """One enemy capturing attempt against a single king ghost.
+
+    ``prob`` is the *attacker-side* success probability -- P(this attacker
+    materialises on ``king_square`` with a clear path), which does **not**
+    include the king's own presence there. That factor is carried separately as
+    ``king_prob`` so ``check_probability`` can weight it as the mutually-exclusive
+    "king is actually on this square" probability instead of folding it into an
+    independent product (see the module docstring)."""
     attacker_id: int
     from_square: int
     king_square: int          # the king-ghost square that would be captured
-    prob: Fraction            # P(this one move captures the king)
+    prob: Fraction            # P(attacker reaches king_square) -- excludes king prob
+    king_prob: Fraction       # P(the king is actually on king_square)
 
 
 def king_ghosts(qb: QuantumBoard, color: bool) -> list[Ghost]:
@@ -91,20 +107,36 @@ def threats_against(qb: QuantumBoard, color: bool) -> list[Threat]:
                     blocker = qb.ghost_at(mid)
                     if blocker is not None and blocker.piece_id != enemy.id:
                         p *= 1 - blocker.prob
-                p *= target.prob
                 if p > 0:
-                    threats.append(Threat(enemy.id, eg.square, move.to_square, p))
+                    threats.append(
+                        Threat(enemy.id, eg.square, move.to_square, p, target.prob))
     return threats
 
 
 def check_probability(qb: QuantumBoard, color: bool) -> Fraction:
-    """Aggregate danger to ``color``'s king: ``1 - prod(1 - p_i)`` over every
-    threat. ``0`` means completely safe; ``1`` means a certain capture is
-    available. Exact ``Fraction`` (e.g. ``Fraction(3, 8)``)."""
-    survive = Fraction(1)
+    """Aggregate danger to ``color``'s king, conditioned on the king's location.
+
+    Partition the threats by the king-ghost square they aim at (mutually
+    exclusive locations, weights ``q_s`` summing to 1), aggregate the
+    attacker-side threats *within* each square as ``1 - prod(1 - a_i)``, then
+    take the ``q_s``-weighted average::
+
+        sum_s  q_s * (1 - prod(1 - a_i) over threats on s)
+
+    ``0`` means completely safe; ``1`` means capture is certain wherever the king
+    turns out to be. Exact ``Fraction`` (e.g. ``Fraction(3, 8)``)."""
+    # king_square -> (q_s, running product of attacker survival on that square)
+    by_square: dict[int, list[Fraction]] = {}
     for threat in threats_against(qb, color):
-        survive *= 1 - threat.prob
-    return 1 - survive
+        entry = by_square.get(threat.king_square)
+        if entry is None:
+            by_square[threat.king_square] = [threat.king_prob, 1 - threat.prob]
+        else:
+            entry[1] *= 1 - threat.prob
+    danger = Fraction(0)
+    for king_prob, survive in by_square.values():
+        danger += king_prob * (1 - survive)
+    return danger
 
 
 def _hypothetical_after(qb: QuantumBoard, move: Move) -> QuantumBoard:

@@ -74,6 +74,30 @@ def test_superposed_king_only_exposed_ghost_counts():
     assert check.check_probability(qb, chess.WHITE) == Fraction(3, 4)
 
 
+def test_cornered_superposed_king_is_certain_check():
+    # King split 2/3 on e7, 1/3 on g8 -- and BOTH squares are under a certain
+    # capture (a rook down the e-file, a rook along the 8th rank). Wherever the
+    # king collapses it dies, so danger must read a full 1, not the old
+    # independent-Bernoulli 1 - (1/3)(2/3) = 7/9.
+    qb, ids = make_board((chess.WHITE, chess.KING, chess.E1),
+                         (chess.BLACK, chess.ROOK, chess.E8),
+                         (chess.BLACK, chess.ROOK, chess.A8),
+                         (chess.BLACK, chess.KING, chess.H1))
+    superpose(qb, ids[0], (chess.E7, Fraction(2, 3)), (chess.G8, Fraction(1, 3)))
+    assert check.check_probability(qb, chess.WHITE) == 1
+
+
+def test_superposed_king_partially_cornered_weights_by_location():
+    # King 2/3 e7 (certainly attacked by the e-file rook) + 1/3 g6 (safe -- the
+    # rook reaches neither the e-file square below e7 nor g6's rank/file).
+    # Danger = 2/3 * 1 + 1/3 * 0 = 2/3.
+    qb, ids = make_board((chess.WHITE, chess.KING, chess.E1),
+                         (chess.BLACK, chess.ROOK, chess.E8),
+                         (chess.BLACK, chess.KING, chess.H1))
+    superpose(qb, ids[0], (chess.E7, Fraction(2, 3)), (chess.G6, Fraction(1, 3)))
+    assert check.check_probability(qb, chess.WHITE) == Fraction(2, 3)
+
+
 def test_partial_blocker_thins_the_threat():
     # A half-present friendly pawn on e4 has a 1/2 chance of blocking the rook.
     qb, ids = make_board((chess.WHITE, chess.KING, chess.E1),

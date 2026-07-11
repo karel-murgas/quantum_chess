@@ -73,7 +73,9 @@ def main():
                 pygame.quit()
                 return
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                config = menu.handle_click(event.pos)
+                result = menu.handle_click(event.pos)
+                if result is not None:
+                    _action, config = result
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_F11:
                     pygame.display.toggle_fullscreen()

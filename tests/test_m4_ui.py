@@ -453,3 +453,88 @@ def test_menu_defaults_stay_hardcoded_without_a_saved_teams_file(tmp_path, monke
     assert fresh.theme_name == "origin"
     assert fresh.white_name == "White"
     assert fresh.black_name == "Black"
+
+
+# --------------------------------------------------------------- in-game settings
+def test_open_settings_via_panel_button_and_via_o_key():
+    app = _new_app()
+    app.handle_mouse_down(app.skin.panel_rects()["settings"].center)
+    assert app.in_settings
+    assert app.settings_menu is not None
+    assert app.settings_menu.in_game
+
+    app.in_settings = False
+    app.settings_menu = None
+    app.handle_keydown(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_o, unicode="o"))
+    assert app.in_settings
+
+
+def test_settings_blocked_during_animation():
+    app = _new_app()
+    app._beats = [Beat(duration_ms=500)]
+    app.handle_mouse_down(app.skin.panel_rects()["settings"].center)
+    assert not app.in_settings   # the click flushed the reveal instead
+
+
+def test_settings_opens_prefilled_from_the_current_match_config():
+    app = _new_app(white_name="Alpha", black_name="Beta")
+    app.open_settings()
+    assert app.settings_menu.white_name == "Alpha"
+    assert app.settings_menu.black_name == "Beta"
+    assert app.settings_menu.collapse_mode == app.config.collapse_mode
+
+
+def test_settings_escape_cancels_without_applying_changes():
+    app = _new_app()
+    app.open_settings()
+    app.settings_menu.white_name = "Changed"
+    app.handle_keydown(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE, unicode=""))
+    assert not app.in_settings
+    assert app.settings_menu is None
+    assert app.config.white_name == "White"     # untouched
+
+
+def test_settings_keydown_routes_text_entry_to_the_menu_not_game_hotkeys():
+    app = _new_app()
+    app.open_settings()
+    app.settings_menu.active_field = "white_name"
+    app.handle_keydown(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_m, unicode="m"))
+    assert app.settings_menu.white_name == "Whitem"   # typed into the field
+    assert app.mode == "move"                          # not treated as the (M) hotkey
+
+
+def test_settings_resume_applies_changes_without_resetting_the_board():
+    app = _new_app()
+    _click(app, chess.E2)
+    _click(app, chess.E4)
+    turn_before = app.qb.turn
+    log_before = list(app.log)
+
+    app.open_settings()
+    app.settings_menu.white_name = "Alpha"
+    app.settings_menu.theme_name = "cyberpunk"
+    app._handle_settings_click(app.settings_menu.resume_rect.center)
+
+    assert not app.in_settings
+    assert app.settings_menu is None
+    assert app.config.white_name == "Alpha"
+    assert app.config.theme == "cyberpunk"
+    assert app.qb.turn == turn_before
+    assert app.qb.piece_id_at(chess.E4) is not None    # board untouched
+    assert app.log[:-1] == log_before                  # only the "updated" note appended
+
+
+def test_settings_new_game_resets_the_board_with_the_edited_config():
+    app = _new_app()
+    _click(app, chess.E2)
+    _click(app, chess.E4)
+
+    app.open_settings()
+    app.settings_menu.black_name = "Beta"
+    app._handle_settings_click(app.settings_menu.start_rect.center)
+
+    assert not app.in_settings
+    assert app.config.black_name == "Beta"
+    assert app.qb.turn == chess.WHITE
+    assert app.qb.piece_id_at(chess.E4) is None
+    assert len(app.qb.pieces) == 32

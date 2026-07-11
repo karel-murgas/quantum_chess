@@ -248,6 +248,90 @@ def test_path_collapse_through_multiple_ghosts():
     assert len(res.events) == 3
 
 
+# -------------------------------------------------- resolve_move: ghost pawn promotion
+def _ghost_pawn_position(pawn_prob=Fraction(1, 2), other_square=chess.H2):
+    """A White pawn split across a7 (``pawn_prob``) / ``other_square``, one
+    push away from promotion, plus both kings."""
+    qb = QuantumBoard()
+    qb.turn = chess.WHITE
+    qb._add_piece(chess.WHITE, chess.KING, chess.E1)
+    qb._add_piece(chess.BLACK, chess.KING, chess.E8)
+    pawn = qb._add_piece(chess.WHITE, chess.PAWN, chess.A7)
+    qb.ghosts_of(pawn.id)[0].prob = pawn_prob
+    qb.ghosts.append(Ghost(pawn.id, other_square, Fraction(1) - pawn_prob))
+    return qb, pawn
+
+
+def _a7a8_queen_move(qb):
+    return next(m for m in generate_moves(qb)
+                if chess.square_name(m.from_square) == "a7"
+                and chess.square_name(m.to_square) == "a8"
+                and m.promotion == chess.QUEEN)
+
+
+def test_solid_pawn_promotion_relocate_is_still_unmeasured():
+    """A fully solid pawn (no siblings) has nothing left to measure -- it
+    promotes exactly as before, no dice drawn."""
+    qb = QuantumBoard()
+    qb.turn = chess.WHITE
+    qb._add_piece(chess.WHITE, chess.KING, chess.E1)
+    qb._add_piece(chess.BLACK, chess.KING, chess.E8)
+    qb._add_piece(chess.WHITE, chess.PAWN, chess.A7)
+    move = _a7a8_queen_move(qb)
+    res = resolve_move(qb, move, GameConfig(), random.Random(0))  # no draws needed
+    assert res.events == []
+    assert not res.fizzled
+    assert qb.piece_id_at(chess.A8) is not None
+    piece_id = qb.piece_id_at(chess.A8)
+    assert qb.pieces[piece_id].ptype == chess.QUEEN
+
+
+def test_ghost_pawn_promotion_confirms_and_promotes_when_present():
+    qb, pawn = _ghost_pawn_position()
+    move = _a7a8_queen_move(qb)
+    rng = ScriptedRng(draws=[0.1])   # 0.1 < 1/2 -> really there
+    res = resolve_move(qb, move, GameConfig(collapse_mode=CollapseMode.FULL), rng)
+    assert not res.fizzled
+    assert res.final_square == chess.A8
+    assert len(res.events) == 1
+    ev = res.events[0]
+    assert ev.role == "promotion" and ev.present
+    assert qb.pieces[pawn.id].ptype == chess.QUEEN
+    remaining = qb.ghosts_of(pawn.id)
+    assert len(remaining) == 1 and remaining[0].square == chess.A8
+    assert remaining[0].prob == Fraction(1)   # sibling on h2 wiped
+    assert qb.turn == chess.BLACK
+
+
+def test_ghost_pawn_promotion_no_promotion_when_absent_partial_mode():
+    qb, pawn = _ghost_pawn_position()
+    move = _a7a8_queen_move(qb)
+    rng = ScriptedRng(draws=[0.9])   # 0.9 >= 1/2 -> not really there
+    res = resolve_move(qb, move, GameConfig(collapse_mode=CollapseMode.PARTIAL), rng)
+    assert not res.fizzled           # the move itself still executed -- just no promotion
+    assert len(res.events) == 1
+    ev = res.events[0]
+    assert ev.role == "promotion" and not ev.present
+    assert qb.pieces[pawn.id].ptype == chess.PAWN   # never promoted -- its problem
+    assert qb.piece_id_at(chess.A8) is None
+    remaining = qb.ghosts_of(pawn.id)
+    assert len(remaining) == 1 and remaining[0].square == chess.H2
+    assert remaining[0].prob == Fraction(1)   # only ghost left -> renormalizes to solid
+    assert qb.turn == chess.BLACK
+
+
+def test_ghost_pawn_promotion_no_promotion_when_absent_full_mode():
+    qb, pawn = _ghost_pawn_position()
+    move = _a7a8_queen_move(qb)
+    rng = ScriptedRng(draws=[0.9])   # not really there; only one sibling left to pick
+    res = resolve_move(qb, move, GameConfig(collapse_mode=CollapseMode.FULL), rng)
+    assert qb.pieces[pawn.id].ptype == chess.PAWN
+    assert qb.piece_id_at(chess.A8) is None
+    remaining = qb.ghosts_of(pawn.id)
+    assert len(remaining) == 1 and remaining[0].square == chess.H2
+    assert remaining[0].prob == Fraction(1)
+
+
 # --------------------------------------------------------- resolve_split: split onto enemy
 def _bishop_split_position():
     """White bishop a1, White king e1, Black king e8, a solid Black pawn on c3

@@ -61,7 +61,7 @@ class Beat:
     travel: tuple[tuple[Token, int], ...] = ()      # (token, from_square)
     flash_square: Optional[int] = None
     flash_present: Optional[bool] = None
-    flash_role: Optional[str] = None                # CollapseEvent.role: "mover"/"split"/"path"/"destination"
+    flash_role: Optional[str] = None                # CollapseEvent.role: "mover"/"split"/"promotion"/"path"/"destination"
     fades: tuple[Token, ...] = ()
     shatter: Optional[Token] = None
     caption: Optional[str] = None
@@ -147,7 +147,7 @@ def build_animation(before: list[Token],
             shatter = _pop_foreign_at(current, ev.captured_square, mover_pids)
 
         if ev.present and ev.captured_square is None:
-            by_piece = ev.role in ("mover", "split")
+            by_piece = ev.role in ("mover", "split", "promotion")
             _solidify(current, ev.piece_id, ev.square, by_piece)
 
         caption, caption_sq = _caption(ev)

@@ -22,6 +22,7 @@ from ..persistence import load_game, save_game
 from ..rules import MoveKind, Split
 from . import render, theme
 from .animation import Token, build_animation
+from .menu import Menu
 from .skins import build_skins
 
 DEFAULT_SAVE_PATH = Path("saves/quicksave.json")
@@ -43,6 +44,8 @@ class App:
         self.should_quit = False      # set once Quit is confirmed; run() exits on it
         self.show_captured = True     # side-panel removed-pieces tray, toggled by (C)
         self.show_check = True        # check-probability readout + move warnings, toggled by (K)
+        self.in_settings = False      # mid-game Settings screen open? (see open_settings)
+        self.settings_menu = None     # the Menu instance driving it while open
 
         # Drawing skin: the whole frame (board + panel) is delegated to one of
         # these (see ui/skins/ and UI_REDESIGN.md). Started as a 3-variant demo
@@ -220,8 +223,18 @@ class App:
         self.log.append(f"{surrendering} {theme.TERMS['surrender_verb']}.")
         self.log.append(f"** {winner} {theme.TERMS['surrender_suffix']} **")
 
-    def new_game(self):
-        self.rng = random.Random()
+    def new_game(self, config=None):
+        """Reset the board. ``config`` (passed by ``_handle_settings_click``
+        when the in-game Settings screen's New Game is used instead of the
+        post-win button) replaces the match's dials/cosmetics and seeds the
+        rng deterministically from it, matching a menu-driven start; the
+        no-arg post-win path keeps the existing config and reseeds randomly,
+        unchanged from before."""
+        if config is not None:
+            self.config = config
+            self.rng = random.Random(config.seed)
+        else:
+            self.rng = random.Random()
         self.qb = QuantumBoard.standard_setup()
         self.mode = "move"
         self.selected = None
@@ -263,6 +276,38 @@ class App:
         self._beat_elapsed = 0.0
         self.log.append(f"Game loaded from {path}.")
 
+    def open_settings(self):
+        """Enter the in-game Settings screen (panel button / (O)) -- the same
+        ``Menu`` widget the pre-game flow uses, reopened over the current
+        match's own dials so a player can tweak theme/colours/names (or the
+        collapse/splitting dials) and either resume this game unchanged or
+        start a fresh one. Blocked mid-animation, like Save/Load, so a
+        collapse reveal can't be interrupted."""
+        if self.is_animating():
+            return
+        self.settings_menu = Menu(self.screen, in_game=True, initial_config=self.config)
+        self.in_settings = True
+
+    def _handle_settings_click(self, pos):
+        """Routes clicks while ``in_settings`` to the settings ``Menu`` instead
+        of the board (see ``run()``). Resume just swaps in the edited config
+        (cosmetics/dials only -- the board, log and turn are untouched); New
+        Game additionally resets the board via ``new_game(config)``."""
+        result = self.settings_menu.handle_click(pos)
+        if result is None:
+            return
+        action, config = result
+        theme.apply_theme(config.theme, config.white_color, config.black_color)
+        if action == "resume":
+            self.config = config
+            self.log.append("Settings updated.")
+        elif action == "new_game":
+            self.new_game(config)
+            self.log.append(f"New game started "
+                            f"({config.team_name(chess.WHITE)} vs {config.team_name(chess.BLACK)}).")
+        self.in_settings = False
+        self.settings_menu = None
+
     def handle_mouse_down(self, pos):
         # Each skin lays its panel out differently; hit-test against the
         # active skin's own rects so clicks track whatever it drew.
@@ -286,6 +331,9 @@ class App:
             return
         if rects.get("view") is not None and rects["view"].collidepoint(pos):
             self.cycle_skin()
+            return
+        if rects.get("settings") is not None and rects["settings"].collidepoint(pos):
+            self.open_settings()
             return
         if rects.get("quit") is not None and rects["quit"].collidepoint(pos):
             if self._confirm_quit:
@@ -536,6 +584,13 @@ class App:
 
     # ---------------------------------------------------------------- draw
     def draw(self):
+        # The Settings screen is a full-screen overlay, like the pre-game
+        # menu -- it takes over the whole window rather than living inside
+        # the skin's own panel, so board/panel drawing is skipped entirely
+        # while it's open.
+        if self.in_settings:
+            self.settings_menu.draw()
+            return
         # The active skin owns the entire frame -- board, pieces, panel,
         # collapse animation. See ui/skins/.
         self.skin.draw(self)
@@ -543,6 +598,18 @@ class App:
     # ----------------------------------------------------------------- run
     def handle_keydown(self, event):
         """Keyboard shortcuts."""
+        if self.in_settings:
+            # Escape backs out of Settings without applying anything -- same
+            # "cancel, never destroy state" contract as cancel_selection.
+            # F11 still works so a player isn't stuck out of fullscreen.
+            if event.key == pygame.K_ESCAPE:
+                self.in_settings = False
+                self.settings_menu = None
+            elif event.key == pygame.K_F11:
+                pygame.display.toggle_fullscreen()
+            else:
+                self.settings_menu.handle_keydown(event)
+            return
         if event.key == pygame.K_F11:
             pygame.display.toggle_fullscreen()
         if event.key == pygame.K_TAB:
@@ -555,6 +622,8 @@ class App:
             self.toggle_captured()
         if event.key == pygame.K_k:
             self.toggle_check()
+        if event.key == pygame.K_o:
+            self.open_settings()
         if event.key == pygame.K_n and self.is_over() and not self.is_animating():
             self.new_game()
         if event.key == pygame.K_F5 and not self.is_animating():
@@ -572,7 +641,10 @@ class App:
                 elif event.type == pygame.KEYDOWN:
                     self.handle_keydown(event)
                 elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                    self.handle_mouse_down(event.pos)
+                    if self.in_settings:
+                        self._handle_settings_click(event.pos)
+                    else:
+                        self.handle_mouse_down(event.pos)
 
             if self.should_quit:
                 return

@@ -130,6 +130,7 @@ class ClaritySkin(BaseSkin):
             "check": pygame.Rect(x + half + 10, 222, half, 30),
             "view": pygame.Rect(x, 258, half, 30),
             "quit": pygame.Rect(x + half + 10, 258, half, 30),
+            "settings": pygame.Rect(x, 294, w, 30),
             "new_game": pygame.Rect(x, WINDOW_H - 92, w, 44),
         }
 
@@ -234,9 +235,10 @@ class ClaritySkin(BaseSkin):
         self._flat_button(surf, rects["quit"],
                           "Confirm quit?" if app._confirm_quit else "Quit",
                           danger=app._confirm_quit)
+        self._flat_button(surf, rects["settings"], "Settings  (O)")
 
         # --- king safety ------------------------------------------------------
-        y = rects["quit"].bottom + 16
+        y = rects["settings"].bottom + 16
         if app.show_check:
             self._caps_label(surf, "king safety", (x, y), rule_to=right)
             y += 20

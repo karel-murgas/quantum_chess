@@ -190,7 +190,7 @@ class HudSkin(BaseSkin):
         surf.blit(dim, br.topleft)
         if beat.flash_square is None or beat.flash_present:
             return  # a positive ("really there") reveal is clean -- no glitch
-        if beat.flash_role in ("mover", "split"):
+        if beat.flash_role in ("mover", "split", "promotion"):
             # the acting piece's own wave function fizzled -- the dramatic
             # moment of the turn, so glitch the whole board.
             self._glitch_region(surf, br, t, n=4, max_dx=14, slice_h=(6, 18))
@@ -235,6 +235,7 @@ class HudSkin(BaseSkin):
             "surrender": pygame.Rect(x, 226, w, 30),
             "view": pygame.Rect(x, 260, half, 30),
             "quit": pygame.Rect(x + half + 8, 260, half, 30),
+            "settings": pygame.Rect(x, 294, w, 30),
             "new_game": pygame.Rect(x, WINDOW_H - 92, w, 44),
         }
 
@@ -384,9 +385,10 @@ class HudSkin(BaseSkin):
                              color=theme.EVENT_ABSENT_COLOR, text_color=(10, 10, 10))
         else:
             self.draw_button(surf, rects["quit"], "[!] QUIT", active=False)
+        self.draw_button(surf, rects["settings"], "[O] SETTINGS", active=False)
 
         # --- THREAT ASSESSMENT module ----------------------------------------
-        y = rects["view"].bottom + 12
+        y = rects["settings"].bottom + 12
         if app.show_check:
             mod = pygame.Rect(x, y, w, 84)
             inner = self._module(surf, mod, "THREAT ASSESSMENT")

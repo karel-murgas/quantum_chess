@@ -27,7 +27,7 @@ simply delegated to ``rules.apply_move`` -- there is nothing to measure.
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from fractions import Fraction
 from typing import Optional
 
@@ -54,7 +54,7 @@ class CollapseEvent:
     actually taken (its token shatters there). Not frozen so the resolver can
     fill these in right after the mutating collapse helpers report back.
     """
-    role: str            # "mover" | "path" | "destination" | "split"
+    role: str            # "mover" | "path" | "destination" | "split" | "promotion"
     piece_id: int
     square: int
     prob_before: Fraction
@@ -193,6 +193,27 @@ def _walk_contact(qb: QuantumBoard, pid: int, mover_color: bool, frm: int, to: i
     return stop_square
 
 
+def _resolve_promotion_relocate(qb: QuantumBoard, move: Move, config: GameConfig,
+                                rng: random.Random) -> MoveResolution:
+    """A quiet (RELOCATE/MERGE) pawn push lands on the promotion rank while the
+    pawn is still just a ghost (prob < 1). Reaching the back rank forces an
+    immediate self-measurement before it's allowed to promote: really there ->
+    confirm solid, drop siblings, promote; not there -> that ghost is gone (the
+    collapse mode applies to whatever's left), no promotion -- its problem."""
+    apply_move(qb, replace(move, promotion=None))  # relocate only; hold the promotion back
+    pid = move.piece_id
+    ghost = qb.ghost_at(move.to_square)
+    present = _flip(rng, ghost.prob)
+    ev = CollapseEvent("promotion", pid, move.to_square, ghost.prob, present)
+    if present:
+        ev.removed = tuple(_collapse_positive(qb, pid, ghost))
+        qb.pieces[pid].ptype = move.promotion
+    else:
+        ev.removed = tuple(_collapse_negative(qb, pid, ghost, config, rng))
+    return MoveResolution(events=[ev], fizzled=False, final_square=move.to_square,
+                          captured_piece_ids=[])
+
+
 def resolve_move(qb: QuantumBoard, move: Move, config: GameConfig,
                  rng: random.Random) -> MoveResolution:
     """Execute ``move``, resolving any quantum contact along the way."""
@@ -201,7 +222,15 @@ def resolve_move(qb: QuantumBoard, move: Move, config: GameConfig,
 
     if move.kind in (MoveKind.RELOCATE, MoveKind.MERGE):
         # No interaction with another piece at all (empty square, or the mover's
-        # own ghost) -- nothing to measure, no collapse.
+        # own ghost) -- nothing to measure, no collapse... unless this is a pawn
+        # reaching the promotion rank while still just a ghost (prob < 1): the
+        # back rank forces an immediate self-measurement before it can promote
+        # (see _resolve_promotion_relocate). A solid pawn (prob == 1) has
+        # nothing left to measure and promotes exactly as before.
+        if move.promotion is not None:
+            source_ghost = qb.ghost_at(move.from_square)
+            if source_ghost.prob < 1:
+                return _resolve_promotion_relocate(qb, move, config, rng)
         apply_move(qb, move)
         return MoveResolution(events=[], fizzled=False, final_square=move.to_square,
                               captured_piece_ids=[])

@@ -16,8 +16,16 @@ TEAMS_SAVE_PATH = Path("saves/teams.json")
 
 
 class Menu:
-    def __init__(self, screen: pygame.Surface):
+    def __init__(self, screen: pygame.Surface, in_game: bool = False, initial_config=None):
+        """``in_game=True`` is how ``App`` reopens this same dial picker mid-match
+        (see ``ui/app.py::open_settings``) instead of only pre-game from
+        ``main.py``: it shows a Resume button alongside Start (relabeled "New
+        Game"), and ``initial_config`` seeds every field from the match's
+        *current* ``GameConfig`` instead of the last saved team file, so the
+        screen opens showing what's actually in play, not stale defaults.
+        """
         self.screen = screen
+        self.in_game = in_game
         self.collapse_mode = CollapseMode.FULL
         self.splitting_enabled = True
         self.seed = random.SystemRandom().randrange(1_000_000)
@@ -29,7 +37,17 @@ class Menu:
         self.black_color = theme.DEFAULT_BLACK_COLOR
         self.active_field = None      # "white_name" | "black_name" | None
 
-        self._load_teams(startup=True)
+        if initial_config is not None:
+            self.collapse_mode = initial_config.collapse_mode
+            self.splitting_enabled = initial_config.splitting_enabled
+            self.seed = initial_config.seed
+            self.theme_name = initial_config.theme
+            self.white_name = initial_config.white_name
+            self.black_name = initial_config.black_name
+            self.white_color = initial_config.white_color
+            self.black_color = initial_config.black_color
+        else:
+            self._load_teams(startup=True)
 
         self.font_title = pygame.font.SysFont("segoeui", 36, bold=True)
         self.font = pygame.font.SysFont("segoeui", 22)
@@ -59,7 +77,16 @@ class Menu:
         self.team_load_rect = pygame.Rect(cx + 130, 566, 200, 40)
         self.team_status = ""       # transient feedback for the last save/load
 
-        self.start_rect = pygame.Rect(cx - 100, 630, 200, 56)
+        # Mid-game, Start doubles as "New Game" (same rect, relabeled) and
+        # gains a Resume neighbour so a match's own settings screen can back
+        # out without resetting the board. Pre-game there's nothing to resume
+        # to, so Start alone stays centered as it always has.
+        if self.in_game:
+            self.resume_rect = pygame.Rect(cx - 210, 630, 200, 56)
+            self.start_rect = pygame.Rect(cx + 10, 630, 200, 56)
+        else:
+            self.resume_rect = None
+            self.start_rect = pygame.Rect(cx - 100, 630, 200, 56)
 
     @staticmethod
     def _swatch_rects(x0):
@@ -73,8 +100,23 @@ class Menu:
             rects.append(pygame.Rect(x, y, size, size))
         return rects
 
+    def _build_config(self):
+        return GameConfig(collapse_mode=self.collapse_mode,
+                          splitting_enabled=self.splitting_enabled,
+                          seed=self.seed,
+                          theme=self.theme_name,
+                          white_name=self.white_name.strip() or "White",
+                          black_name=self.black_name.strip() or "Black",
+                          white_color=self.white_color,
+                          black_color=self.black_color)
+
     def handle_click(self, pos):
-        """Returns a GameConfig once Start is clicked, else None."""
+        """Returns ``(action, GameConfig)`` once Start/Resume is clicked, else
+        None. ``action`` is ``"start"`` pre-game, or (mid-game, ``in_game``)
+        ``"new_game"`` for the relabeled Start button / ``"resume"`` for the
+        Resume button -- ``App`` (see ``open_settings``/``_handle_settings_click``)
+        tells those apart to decide whether to reset the board or just apply
+        the dial/cosmetic changes to the match in progress."""
         if self.white_name_rect.collidepoint(pos):
             self.active_field = "white_name"
             return None
@@ -101,15 +143,10 @@ class Menu:
             self._save_teams()
         elif self.team_load_rect.collidepoint(pos):
             self._load_teams()
+        elif self.in_game and self.resume_rect.collidepoint(pos):
+            return ("resume", self._build_config())
         elif self.start_rect.collidepoint(pos):
-            return GameConfig(collapse_mode=self.collapse_mode,
-                              splitting_enabled=self.splitting_enabled,
-                              seed=self.seed,
-                              theme=self.theme_name,
-                              white_name=self.white_name.strip() or "White",
-                              black_name=self.black_name.strip() or "Black",
-                              white_color=self.white_color,
-                              black_color=self.black_color)
+            return ("new_game" if self.in_game else "start", self._build_config())
         elif self.theme_name == "cyberpunk":
             for rect, color in zip(self.white_swatch_rects, theme.SWATCHES):
                 if rect.collidepoint(pos):
@@ -212,7 +249,8 @@ class Menu:
         self.screen.fill(theme.BG)
         w, _ = self.screen.get_size()
 
-        title = self.font_title.render("Quantum Chess -- Match Setup", True, theme.TEXT)
+        title_text = "Quantum Chess -- Settings" if self.in_game else "Quantum Chess -- Match Setup"
+        title = self.font_title.render(title_text, True, theme.TEXT)
         self.screen.blit(title, title.get_rect(center=(w // 2, 70)))
 
         caption = self.font_small.render(
@@ -254,4 +292,8 @@ class Menu:
             status = self.font_small.render(self.team_status, True, theme.TEXT_DIM)
             self.screen.blit(status, status.get_rect(center=(w // 2, self.reroll_rect.bottom + 14)))
 
-        self._button(self.start_rect, "Start Game", True)
+        if self.in_game:
+            self._button(self.resume_rect, "Resume Game", True)
+            self._button(self.start_rect, "New Game", False)
+        else:
+            self._button(self.start_rect, "Start Game", True)

@@ -116,6 +116,20 @@ has lost so far (small glyphs, sorted queen-to-pawn). Click **Removed pieces
 (C)** (or press `C`) to hide it and reclaim the panel space for the log, or
 show it again.
 
+## Changing settings mid-game
+
+Click **Settings (O)** (or press `O`) at any time to reopen the same setup
+screen you saw before the match started, pre-filled with the game's current
+dials, theme, team names, and colours. From there you can:
+
+- **Resume Game** — apply whatever you changed (colours, names, theme, or
+  even the collapse-mode/splitting dials) and go straight back to this exact
+  position, same board, same turn, same log.
+- **New Game** — apply your changes and start a fresh game with them, same as
+  starting over from the pre-game menu.
+
+Press `Escape` to back out of Settings without changing anything.
+
 ## Saving and loading
 
 Click **Save (F5)** (or press `F5`) at any time to snapshot the game to
@@ -140,3 +154,5 @@ new save overwrites the last one.
 | Save game | Click "Save", or press `F5` |
 | Load game | Click "Load", or press `F9` |
 | Toggle removed-pieces tray | Click "Removed pieces", or press `C` |
+| Open Settings (change theme/names/colours/dials) | Click "Settings", or press `O` |
+| Resume from Settings without changing anything | Press `Escape` |
