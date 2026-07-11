@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest tests/ -xvs -k \"pawn\")",
+      "Bash(python -m pytest tests/ -q)",
+      "Bash(python)",
+      "PowerShell($env:SDL_VIDEODRIVER='dummy'; python -m pytest -q 2>&1 | Select-Object -Last 15)",
+      "PowerShell($env:SDL_VIDEODRIVER='dummy'; $env:SDL_AUDIODRIVER='dummy'; python -m pytest -q 2>&1 | Select-Object -Last 30)",
+      "PowerShell($env:SDL_VIDEODRIVER='dummy'; $env:SDL_AUDIODRIVER='dummy'; python \"C:\\\\Users\\\\karel\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-karel-Documents-Python-Quantum-chess\\\\f90a4dba-4187-4ce3-83c6-97f4bf25b466\\\\scratchpad\\\\smoke_anim.py\" 2>&1 | Select-Object -Last 20)",
+      "PowerShell($env:SDL_VIDEODRIVER='dummy'; $env:SDL_AUDIODRIVER='dummy'; $env:PYTHONPATH='c:\\\\Users\\\\karel\\\\Documents\\\\Python\\\\Quantum chess'; python \"C:\\\\Users\\\\karel\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-karel-Documents-Python-Quantum-chess\\\\f90a4dba-4187-4ce3-83c6-97f4bf25b466\\\\scratchpad\\\\smoke_anim.py\" 2>&1 | Select-Object -Last 20)",
+      "PowerShell($env:SDL_VIDEODRIVER='dummy'; $env:SDL_AUDIODRIVER='dummy'; python -m pytest -q 2>&1 | Select-Object -Last 8)",
+      "Bash(git init *)",
+      "Bash(git config *)",
+      "Bash(git add *)",
+      "Bash(git commit -m 'v0.1: working app *)",
+      "Bash(git branch *)",
+      "Bash(git checkout *)"
+    ]
+  }
+}

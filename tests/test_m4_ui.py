@@ -1,0 +1,455 @@
+"""Milestone 4 tests: UI interaction logic, driven headlessly (SDL dummy driver).
+
+These simulate clicks by calling App.handle_mouse_down() directly with pixel
+coordinates computed from render.square_rect() -- no real window or display
+needed, but real pygame Surface/font machinery runs underneath.
+"""
+
+import os
+
+os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+
+from fractions import Fraction
+
+import chess
+import pygame
+import pytest
+
+from quantumchess.config import CollapseMode, GameConfig
+from quantumchess.model import Ghost
+from quantumchess.ui import render, theme
+from quantumchess.ui.animation import Beat
+from quantumchess.ui.app import App
+from quantumchess.ui.menu import Menu
+
+pygame.init()
+_SCREEN = pygame.display.set_mode((theme.WINDOW_W, theme.WINDOW_H))
+
+
+def _click(app, square):
+    app.handle_mouse_down(render.square_rect(square).center)
+
+
+def _new_app(**overrides):
+    kwargs = dict(collapse_mode=CollapseMode.FULL, splitting_enabled=True, seed=0)
+    kwargs.update(overrides)
+    return App(_SCREEN, GameConfig(**kwargs))
+
+
+# ------------------------------------------------------------------- moves
+def test_select_then_move_executes_and_advances_turn():
+    app = _new_app()
+    _click(app, chess.E2)
+    assert app.selected == chess.E2
+
+    _click(app, chess.E4)
+    assert app.selected is None
+    assert app.qb.turn == chess.BLACK
+    assert app.qb.piece_id_at(chess.E4) is not None
+    assert app.qb.piece_id_at(chess.E2) is None
+    assert len(app.log) == 1
+
+
+def test_clicking_selected_square_again_deselects():
+    app = _new_app()
+    _click(app, chess.E2)
+    assert app.selected == chess.E2
+    _click(app, chess.E2)
+    assert app.selected is None
+
+
+def test_clicking_illegal_square_reselects_or_clears():
+    app = _new_app()
+    _click(app, chess.E2)
+    _click(app, chess.D2)          # another own pawn, not a legal e2 destination
+    assert app.selected == chess.D2
+
+    _click(app, chess.D4)          # legal move for the newly selected pawn
+    assert app.qb.piece_id_at(chess.D4) is not None
+    assert app.selected is None
+
+
+def test_clicking_empty_irrelevant_square_clears_selection():
+    app = _new_app()
+    _click(app, chess.E2)
+    _click(app, chess.H5)          # not a legal destination, not an own ghost
+    assert app.selected is None
+
+
+# ------------------------------------------------------------------- split
+def test_split_two_clicks_creates_two_ghosts():
+    app = _new_app()
+    app.toggle_mode()               # toggling clears selection, so do it first
+    assert app.mode == "split"
+    _click(app, chess.B1)          # knight
+
+    _click(app, chess.A3)
+    assert app.split_pick_a == chess.A3
+
+    _click(app, chess.C3)
+    assert app.split_pick_a is None
+    assert app.selected is None
+
+    knight_id = None
+    for pid, piece in app.qb.pieces.items():
+        if piece.ptype == chess.KNIGHT and piece.color == chess.WHITE and app.qb.ghosts_of(pid):
+            squares = {g.square for g in app.qb.ghosts_of(pid)}
+            if squares == {chess.A3, chess.C3}:
+                knight_id = pid
+    assert knight_id is not None
+    ghosts = app.qb.ghosts_of(knight_id)
+    assert {g.prob for g in ghosts} == {Fraction(1, 2)}
+    assert app.qb.turn == chess.BLACK
+
+
+def test_split_pick_a_reclick_cancels():
+    app = _new_app()
+    app.toggle_mode()
+    _click(app, chess.B1)
+    _click(app, chess.A3)
+    assert app.split_pick_a == chess.A3
+    _click(app, chess.A3)          # re-click cancels the pick
+    assert app.split_pick_a is None
+    assert app.qb.turn == chess.WHITE   # nothing was consumed
+
+
+def test_split_can_pick_source_square_as_one_branch():
+    app = _new_app()
+    app.toggle_mode()
+    _click(app, chess.B1)          # knight
+    assert chess.B1 in app._legal_by_square()   # own square offered as a target
+
+    _click(app, chess.B1)          # first branch: stay put
+    assert app.split_pick_a == chess.B1
+
+    _click(app, chess.A3)          # second branch: move
+    assert app.split_pick_a is None
+    assert app.selected is None
+
+    knight_id = None
+    for pid, piece in app.qb.pieces.items():
+        if piece.ptype == chess.KNIGHT and piece.color == chess.WHITE and app.qb.ghosts_of(pid):
+            squares = {g.square for g in app.qb.ghosts_of(pid)}
+            if squares == {chess.B1, chess.A3}:
+                knight_id = pid
+    assert knight_id is not None
+    ghosts = app.qb.ghosts_of(knight_id)
+    assert {g.prob for g in ghosts} == {Fraction(1, 2)}
+    assert app.qb.turn == chess.BLACK
+
+
+def test_toggle_mode_respects_splitting_disabled():
+    app = _new_app(splitting_enabled=False)
+    app.toggle_mode()
+    assert app.mode == "move"
+
+
+# -------------------------------------------------------------- promotion
+def test_promotion_picker_then_choice_executes():
+    app = _new_app()
+    black_pawn_id = app.qb.piece_id_at(chess.E7)
+    app.qb.pieces[black_pawn_id].alive = False
+    app.qb.ghosts = [g for g in app.qb.ghosts if g.piece_id != black_pawn_id]
+    black_king_id = app.qb.piece_id_at(chess.E8)
+    app.qb.ghosts_of(black_king_id)[0].square = chess.E5   # vacate e8 for the promotion
+
+    pawn_id = app.qb.piece_id_at(chess.E2)
+    app.qb.ghosts_of(pawn_id)[0].square = chess.E7
+
+    _click(app, chess.E7)
+    assert app.selected == chess.E7
+    _click(app, chess.E8)
+    assert app._pending_promotion is not None
+    assert app.qb.turn == chess.WHITE          # not yet resolved
+
+    rook_rect_center = render.promotion_rects()[chess.ROOK].center
+    app.handle_mouse_down(rook_rect_center)
+
+    assert app._pending_promotion is None
+    assert app.qb.turn == chess.BLACK
+    assert app.qb.pieces[pawn_id].ptype == chess.ROOK
+    assert app.qb.ghosts_of(pawn_id)[0].square == chess.E8
+
+
+# ------------------------------------------------------------------ animation
+def test_animation_drains_beats_over_time_and_blocks_input():
+    app = _new_app()
+    app._beats = [Beat(duration_ms=500), Beat(duration_ms=500)]
+    assert app.is_animating()
+
+    app.update(499)
+    assert len(app._beats) == 2      # not yet time to advance
+
+    app.update(2)                    # first beat done
+    assert len(app._beats) == 1
+
+    app.update(500)                  # second beat done
+    assert len(app._beats) == 0
+    assert not app.is_animating()
+
+    _click(app, chess.E2)            # normal input resumes
+    assert app.selected == chess.E2
+
+
+def test_one_frame_can_drain_several_short_beats():
+    app = _new_app()
+    app._beats = [Beat(duration_ms=120), Beat(duration_ms=120), Beat(duration_ms=120)]
+    app.update(1000)                 # a long frame flushes them all
+    assert not app.is_animating()
+
+
+def test_winning_animation_cannot_be_skipped_via_new_game_click():
+    app = _new_app()
+    app.qb.game_over = True
+    app.qb.winner = chess.WHITE
+    app._beats = [Beat(duration_ms=500), Beat(duration_ms=500)]
+
+    # First click on the New Game button lands on the reveal, not the button:
+    # it flushes the animation rather than starting a new game.
+    app.handle_mouse_down(app.skin.panel_rects()["new_game"].center)
+    assert not app.is_animating()
+    assert app.qb.game_over            # New Game was NOT triggered by that click
+
+    # Only once the reveal is done does the same click actually start a new game.
+    app.handle_mouse_down(app.skin.panel_rects()["new_game"].center)
+    assert not app.qb.game_over
+
+
+def test_click_during_animation_skips_it():
+    app = _new_app()
+    app._beats = [Beat(duration_ms=500), Beat(duration_ms=500)]
+    _click(app, chess.A1)          # any click flushes the whole animation
+    assert not app.is_animating()
+
+
+# ------------------------------------------------------------------ game over
+def test_game_over_blocks_all_input():
+    app = _new_app()
+    app.qb.game_over = True
+    app.qb.winner = chess.WHITE
+    _click(app, chess.E2)
+    assert app.selected is None
+    assert app.qb.turn == chess.WHITE
+
+
+def test_new_game_button_resets_after_game_over():
+    app = _new_app()
+    _click(app, chess.E2)
+    app.qb.game_over = True
+    app.qb.winner = chess.WHITE
+    app.log.append("** White wins by capturing the king! **")
+
+    app.handle_mouse_down(app.skin.panel_rects()["new_game"].center)
+
+    assert not app.qb.game_over
+    assert app.qb.winner is None
+    assert app.log == []
+    assert app.selected is None
+    assert app.qb.turn == chess.WHITE
+    assert len(app.qb.pieces) == 32
+
+
+def test_surrender_requires_a_second_confirm_click():
+    app = _new_app()
+    surrender_center = app.skin.panel_rects()["surrender"].center
+
+    app.handle_mouse_down(surrender_center)   # arms the confirm, doesn't act yet
+    assert not app.qb.game_over
+    assert app._confirm_surrender
+
+    app.handle_mouse_down(surrender_center)   # second click actually surrenders
+    assert app.qb.game_over
+    assert app.qb.winner == chess.BLACK       # White was to move and gave up
+    assert not app._confirm_surrender
+    assert any("resign" in line.lower() for line in app.log)
+    assert any("wins" in line.lower() for line in app.log)
+
+
+def test_surrender_confirm_is_cancelled_by_any_other_click():
+    app = _new_app()
+    app.handle_mouse_down(app.skin.panel_rects()["surrender"].center)
+    assert app._confirm_surrender
+
+    _click(app, chess.E2)   # an unrelated click backs out instead of surrendering
+    assert not app._confirm_surrender
+    assert not app.qb.game_over
+    assert app.selected is None   # the click that cancelled confirm wasn't itself acted on
+
+
+def test_surrender_confirm_is_cancelled_by_escape():
+    app = _new_app()
+    app.handle_mouse_down(app.skin.panel_rects()["surrender"].center)
+    assert app._confirm_surrender
+
+    app.cancel_selection()
+    assert not app._confirm_surrender
+    assert not app.qb.game_over
+
+
+def test_surrender_button_does_nothing_once_game_is_over():
+    app = _new_app()
+    app.qb.game_over = True
+    app.qb.winner = chess.WHITE
+
+    app.handle_mouse_down(app.skin.panel_rects()["surrender"].center)
+
+    assert not app._confirm_surrender
+    assert app.qb.winner == chess.WHITE   # untouched
+
+
+def test_cancel_selection_backs_out_without_acting():
+    app = _new_app()
+    _click(app, chess.E2)
+    assert app.selected == chess.E2
+    app.cancel_selection()
+    assert app.selected is None
+    assert app.qb.turn == chess.WHITE   # nothing was played
+
+    app.toggle_mode()
+    _click(app, chess.B1)
+    _click(app, chess.A3)
+    assert app.split_pick_a == chess.A3
+    app.cancel_selection()
+    assert app.split_pick_a is None
+    assert app.selected == chess.B1     # cancel unwinds one step at a time
+
+
+# -------------------------------------------------------------- mode button
+def test_mode_button_click_toggles_and_is_disabled_when_splitting_off():
+    app = _new_app()
+    app.handle_mouse_down(app.skin.panel_rects()["mode"].center)
+    assert app.mode == "split"
+    app.handle_mouse_down(app.skin.panel_rects()["mode"].center)
+    assert app.mode == "move"
+
+    app2 = _new_app(splitting_enabled=False)
+    app2.handle_mouse_down(app2.skin.panel_rects()["mode"].center)
+    assert app2.mode == "move"
+
+
+# -------------------------------------------------------- removed-pieces tray
+def test_captured_button_toggles_show_captured():
+    app = _new_app()
+    assert app.show_captured is True
+    app.handle_mouse_down(app.skin.panel_rects()["captured"].center)
+    assert app.show_captured is False
+    app.handle_mouse_down(app.skin.panel_rects()["captured"].center)
+    assert app.show_captured is True
+
+
+def test_captured_button_works_even_after_game_over():
+    app = _new_app()
+    app.qb.game_over = True
+    app.qb.winner = chess.WHITE
+    app.handle_mouse_down(app.skin.panel_rects()["captured"].center)
+    assert app.show_captured is False
+
+
+def test_draw_with_removed_pieces_does_not_crash():
+    app = _new_app()
+    pawn_id = app.qb.piece_id_at(chess.E7)
+    app.qb.pieces[pawn_id].alive = False
+    app.qb.ghosts = [g for g in app.qb.ghosts if g.piece_id != pawn_id]
+    app.draw()          # tray shown, with one removed piece to render
+    app.toggle_captured()
+    app.draw()          # tray hidden
+
+
+# ------------------------------------------------------------ contact via UI
+def test_contact_move_through_ui_updates_log_and_board():
+    app = _new_app()
+    rook_id = app.qb.piece_id_at(chess.A1)
+    app.qb.ghosts_of(rook_id)[0].square = chess.A1  # keep rook solid at a1
+    # remove the a-file pawn so the rook's path up the file is open, then
+    # place a superposed black bishop ghost on that file to force CONTACT.
+    a_pawn_id = app.qb.piece_id_at(chess.A2)
+    app.qb.pieces[a_pawn_id].alive = False
+    app.qb.ghosts = [g for g in app.qb.ghosts if g.piece_id != a_pawn_id]
+
+    bishop_id = app.qb.piece_id_at(chess.C8)
+    app.qb.ghosts_of(bishop_id)[0].square = chess.A4
+    app.qb.ghosts_of(bishop_id)[0].prob = Fraction(1, 2)
+    app.qb.ghosts.append(Ghost(bishop_id, chess.H4, Fraction(1, 2)))
+
+    _click(app, chess.A1)
+    legal = app._legal_by_square()
+    assert legal.get(chess.A4) == "contact"
+
+    _click(app, chess.A4)
+    assert len(app.log) == 1
+    # The rook is solid (prob=1) so it can't fizzle; the only randomness is
+    # whether the bishop ghost was really on a4 -- either way the turn advances.
+    assert app.qb.turn == chess.BLACK
+
+
+# --------------------------------------------------------------- save / load
+def test_save_to_then_load_from_round_trips_state(tmp_path):
+    app = _new_app()
+    save_path = tmp_path / "quicksave.json"
+
+    _click(app, chess.E2)
+    _click(app, chess.E4)          # some actual history to distinguish from fresh
+    saved_log = list(app.log)      # the log *before* the "saved to" note gets appended
+    saved_turn = app.qb.turn
+    app.save_to(save_path)
+    assert save_path.exists()
+
+    app.new_game()                 # blow away in-memory state
+    assert app.qb.turn == chess.WHITE
+    assert app.log == []
+
+    app.load_from(save_path)
+    assert app.qb.turn == saved_turn
+    assert app.qb.piece_id_at(chess.E4) is not None
+    assert app.log[:-1] == saved_log   # last entry is the "loaded from" note
+    assert app.selected is None and app.split_pick_a is None
+
+
+def test_save_and_load_panel_buttons_are_clickable(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)    # DEFAULT_SAVE_PATH is relative -- keep it out of the repo
+    app = _new_app()
+    _click(app, chess.E2)
+    _click(app, chess.E4)
+
+    app.handle_mouse_down(app.skin.panel_rects()["save"].center)
+    assert any("saved" in line.lower() for line in app.log)
+
+    app.new_game()
+    app.handle_mouse_down(app.skin.panel_rects()["load"].center)
+    assert app.qb.piece_id_at(chess.E4) is not None
+
+
+def test_load_from_missing_file_logs_error_without_crashing(tmp_path):
+    app = _new_app()
+    app.load_from(tmp_path / "does-not-exist.json")
+    assert any("couldn't load" in line.lower() for line in app.log)
+    assert app.qb.turn == chess.WHITE   # untouched -- load failed cleanly
+
+
+# ------------------------------------------------------------------- menu
+def test_menu_defaults_from_last_saved_teams(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)    # Menu.TEAMS_SAVE_PATH is relative -- keep it out of the repo
+    saver = Menu(_SCREEN)
+    saver.theme_name = "cyberpunk"
+    saver.white_name = "Alpha"
+    saver.black_name = "Beta"
+    saver.white_color = theme.SWATCHES[1]
+    saver.black_color = theme.SWATCHES[2]
+    saver._save_teams()
+
+    fresh = Menu(_SCREEN)
+    assert fresh.theme_name == "cyberpunk"
+    assert fresh.white_name == "Alpha"
+    assert fresh.black_name == "Beta"
+    assert fresh.white_color == theme.SWATCHES[1]
+    assert fresh.black_color == theme.SWATCHES[2]
+    assert fresh.team_status == ""   # silent on startup, unlike an explicit Load click
+
+
+def test_menu_defaults_stay_hardcoded_without_a_saved_teams_file(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    fresh = Menu(_SCREEN)
+    assert fresh.theme_name == "origin"
+    assert fresh.white_name == "White"
+    assert fresh.black_name == "Black"
