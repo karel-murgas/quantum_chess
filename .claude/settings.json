@@ -17,7 +17,15 @@
       "Bash(git checkout *)",
       "Bash(SDL_VIDEODRIVER=dummy python -m pytest tests/test_check.py -q)",
       "Bash(SDL_VIDEODRIVER=dummy python -m pytest -q)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Skill(run)",
+      "Skill(run:*)",
+      "Bash(python -m pytest tests/ -q --tb=short)",
+      "Bash(python demo_fraction_visibility.py)",
+      "Bash(cd \"c:\\\\Users\\\\karel\\\\Documents\\\\Python\\\\Quantum chess\" && rm -f demo_fraction_visibility.py fraction_visibility_demo.png && git status)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\karel\\Documents\\Python\\Quantum chess"
     ]
   }
 }

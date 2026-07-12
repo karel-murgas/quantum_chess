@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Local save data (per-player state, not project content)
+saves/*.json
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Virtualenvs
+.venv/
+venv/

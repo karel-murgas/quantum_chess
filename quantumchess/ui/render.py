@@ -191,8 +191,11 @@ def draw_token(surface, piece_font, color: bool, ptype: int, center, *, alpha: i
     surface.blit(token_surf, token_surf.get_rect(center=center))
 
 
-def _draw_prob_label(surface, label_font, prob: Fraction, center, alpha: int = 255):
-    label = label_font.render(frac_str(prob), True, theme.ACCENT)
+def _draw_prob_label(surface, label_font, prob: Fraction, center, alpha: int = 255, color: bool = chess.WHITE):
+    # Use the piece's ink color (white for black pieces, black for white pieces)
+    # so fractions contrast well against the token circle
+    ink = theme.WHITE_INK if color == chess.BLACK else theme.BLACK_INK
+    label = label_font.render(frac_str(prob), True, ink)
     if alpha < 255:
         label.set_alpha(alpha)
     x = center[0] + theme.SQUARE // 2 - label.get_width() - 4
@@ -208,7 +211,7 @@ def draw_pieces(surface, qb: QuantumBoard, piece_font, label_font):
         draw_token(surface, piece_font, piece.color, piece.ptype, center,
                    alpha=_prob_alpha(ghost.prob, solid))
         if not solid:
-            _draw_prob_label(surface, label_font, ghost.prob, center)
+            _draw_prob_label(surface, label_font, ghost.prob, center, color=piece.color)
 
 
 # --------------------------------------------------------------- collapse anim
@@ -227,7 +230,7 @@ def _draw_anim_token(surface, piece_font, label_font, token: Token, center, alph
     alpha = int(base * alpha_mult)
     draw_token(surface, piece_font, token.color, token.ptype, center, alpha=alpha)
     if not token.solid and alpha_mult > 0.15:
-        _draw_prob_label(surface, label_font, token.prob, center, alpha=int(255 * alpha_mult))
+        _draw_prob_label(surface, label_font, token.prob, center, alpha=int(255 * alpha_mult), color=token.color)
 
 
 def _draw_flash(surface, square: int, present: bool, t: float):
@@ -372,6 +375,25 @@ def panel_rects():
 # Rough material order (highest first) so the removed-pieces tray reads like
 # a captured-material strip rather than capture order.
 _CAPTURED_ORDER = (chess.QUEEN, chess.ROOK, chess.BISHOP, chess.KNIGHT, chess.PAWN, chess.KING)
+
+
+def fit_captured_icon_radius(tray_width, available_height, white_n, black_n,
+                             default_r=12, min_r=5):
+    """Shrink the removed-pieces tray's icon size until both team columns
+    (header + wrapped icon grid, stacked with a gap between them) fit inside
+    `available_height` -- otherwise a long game with many captures grows the
+    tray past whatever's laid out below it (win banner, New Game button,
+    footer text)."""
+    header_h, col_gap = 20, 10
+    for r in range(default_r, min_r - 1, -1):
+        step = r * 2 + 4
+        per_row = max(1, tray_width // step)
+        white_rows = -(-white_n // per_row) if white_n else 1
+        black_rows = -(-black_n // per_row) if black_n else 1
+        needed = 2 * header_h + white_rows * step + black_rows * step + col_gap
+        if needed <= available_height:
+            return r
+    return min_r
 
 
 def _draw_captured_column(surface, small_font, icon_font, label, pieces, color,
@@ -529,13 +551,15 @@ def draw_side_panel(surface, qb: QuantumBoard, config, mode, log_lines, status_t
                      if p.ptype in _CAPTURED_ORDER else len(_CAPTURED_ORDER))
         white_removed = [p for p in removed if p.color == chess.WHITE]
         black_removed = [p for p in removed if p.color == chess.BLACK]
+        icon_r = fit_captured_icon_radius(tray_width, bottom_limit - log_top,
+                                          len(white_removed), len(black_removed))
         ty = _draw_captured_column(surface, fonts["small"], fonts["icon"],
                                    config.team_name(chess.WHITE), white_removed,
-                                   chess.WHITE, tray_x, log_top, panel_right)
+                                   chess.WHITE, tray_x, log_top, panel_right, icon_r=icon_r)
         ty += 10
         _draw_captured_column(surface, fonts["small"], fonts["icon"],
                               config.team_name(chess.BLACK), black_removed,
-                              chess.BLACK, tray_x, ty, panel_right)
+                              chess.BLACK, tray_x, ty, panel_right, icon_r=icon_r)
 
     if qb.game_over and qb.winner is not None:
         banner = f"{config.team_name(qb.winner).upper()} WINS"

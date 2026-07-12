@@ -75,6 +75,12 @@ class BaseSkin:
             "label": pygame.font.SysFont(f, 15, bold=True),
             "coord": pygame.font.SysFont(f, 13, bold=True),
             "icon": pygame.font.SysFont(self.SYMBOL, 18),
+            # Ghost-probability chip label (see _chip below): always the base
+            # family, never a skin's own typographic personality (e.g. HUD's
+            # Consolas) -- a monospace "/" glyph's own bearing threw the
+            # visual centre off even though the bounding box was centred, so
+            # every skin now renders this one label identically to Clarity's.
+            "chip": pygame.font.SysFont(BaseSkin.FAMILY, 12, bold=True),
         }
 
     # ----------------------------------------------------------- utilities
@@ -98,6 +104,20 @@ class BaseSkin:
             a = 2 * math.pi * i / n
             p = (center[0] + int(r * math.cos(a)), center[1] + int(r * math.sin(a)))
             pygame.draw.circle(surf, color, p, 3)
+
+    def _chip(self, surf, text, center, bg, fg, font=None):
+        """A small rounded pill: opaque ``bg`` behind ``fg``-coloured text,
+        centred exactly on ``center``. Shared by every skin's ghost-probability
+        label so they all get the same (verified-correct) text centring --
+        drawn straight onto ``surf`` with plain opaque fills, no intermediate
+        alpha-blended surface, which is what keeps the centring exact."""
+        s = (font or self.fonts["chip"]).render(text, True, fg)
+        pad = 4
+        w, h = s.get_width() + pad * 2, s.get_height() + pad
+        chip = pygame.Rect(0, 0, w, h)
+        chip.center = center
+        pygame.draw.rect(surf, bg, chip, border_radius=h // 2)
+        surf.blit(s, s.get_rect(center=chip.center))
 
     @staticmethod
     def now():
@@ -250,7 +270,7 @@ class BaseSkin:
                           alpha=alpha, radius=radius)
 
     def draw_ghost_prob(self, surf, ghost, center, color, alpha=255):
-        render._draw_prob_label(surf, self.fonts["label"], ghost.prob, center, alpha=alpha)
+        render._draw_prob_label(surf, self.fonts["label"], ghost.prob, center, alpha=alpha, color=color)
 
     # ------------------------------------------------------- entanglement web
     def draw_sibling_web(self, surf, app):
@@ -310,7 +330,7 @@ class BaseSkin:
         if not tok.solid and alpha_mult > 0.15:
             # a lightweight ghost prob during motion (fraction), for all skins
             render._draw_prob_label(surf, self.fonts["label"], tok.prob, center,
-                                    alpha=int(255 * alpha_mult))
+                                    alpha=int(255 * alpha_mult), color=tok.color)
 
     def draw_collapse(self, surf, app):
         beat = app._beats[0]
@@ -469,13 +489,15 @@ class BaseSkin:
                          if p.ptype in render._CAPTURED_ORDER else len(render._CAPTURED_ORDER))
             white = [p for p in removed if p.color == chess.WHITE]
             black = [p for p in removed if p.color == chess.BLACK]
+            icon_r = render.fit_captured_icon_radius(tray_width, bottom_limit - log_top,
+                                                      len(white), len(black))
             ty = render._draw_captured_column(surf, self.fonts["small"], self.fonts["icon"],
                                               config.team_name(chess.WHITE), white,
-                                              chess.WHITE, tray_x, log_top, panel_right)
+                                              chess.WHITE, tray_x, log_top, panel_right, icon_r=icon_r)
             ty += 10
             render._draw_captured_column(surf, self.fonts["small"], self.fonts["icon"],
                                          config.team_name(chess.BLACK), black,
-                                         chess.BLACK, tray_x, ty, panel_right)
+                                         chess.BLACK, tray_x, ty, panel_right, icon_r=icon_r)
 
     # ------------------------------------------------------------ promotion
     def draw_promotion(self, surf, app):

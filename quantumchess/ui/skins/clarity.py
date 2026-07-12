@@ -68,17 +68,12 @@ class ClaritySkin(BaseSkin):
         pygame.draw.arc(surf, self._tint(theme.TEXT_DIM, 120), arc, 0, 2 * math.pi, 7)
         start = math.pi / 2
         pygame.draw.arc(surf, theme.ACCENT, arc, start - 2 * math.pi * frac, start, 7)
+        # Chip uses the piece's OWN body/ink pair (not the neutral accent) so
+        # the fraction reads as "this piece's number", and keeps solid
+        # contrast against the board regardless of which team it belongs to.
+        fill, _, ink = self._token_colors(color)
         self._chip(surf, render.frac_str(ghost.prob), (rect.centerx, rect.bottom - 12),
-                   theme.ACCENT, (10, 10, 12))
-
-    def _chip(self, surf, text, center, bg, fg):
-        s = self.fonts["tiny"].render(text, True, fg)
-        pad = 4
-        w, h = s.get_width() + pad * 2, s.get_height() + pad
-        chip = pygame.Rect(0, 0, w, h)
-        chip.center = center
-        pygame.draw.rect(surf, bg, chip, border_radius=h // 2)
-        surf.blit(s, s.get_rect(center=chip.center))
+                   fill, ink)
 
     def draw_legal(self, surf, app, legal, warnings):
         # Same ring language as Polished: solid ring = move, double ring =

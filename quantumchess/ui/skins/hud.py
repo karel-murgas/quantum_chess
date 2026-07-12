@@ -136,22 +136,36 @@ class HudSkin(BaseSkin):
 
     def draw_ghost_prob(self, surf, ghost, center, color, alpha=255):
         rect = render.square_rect(ghost.square)
-        r = int(SQUARE * 0.46)
+        # Snug against the token's own border ring (drawn at core radius
+        # SQUARE*0.40 in draw_token) so the probability meter reads as one
+        # continuous ring hugging the piece, not a separate floating halo
+        # with a gap -- and thick enough (like Clarity's donut) to read as
+        # a meter rather than a stray hairline.
+        core_r = int(SQUARE * 0.40)
+        ring_w = 6
+        r = core_r + ring_w // 2 + 1
         arc = pygame.Rect(0, 0, r * 2, r * 2)
         arc.center = rect.center
         frac = float(ghost.prob)
-        # The probability ring is drawn in the piece's OWN team colour, never
-        # a neutral/blended global accent -- a third, unaffiliated hue here
-        # (the old bug: this used to be theme.ACCENT, a blend of both teams'
-        # colours, which could itself read as green and blur which side a
-        # ghost belongs to) would fight the identity ring instead of
-        # reinforcing it.
         _, border, _ = self._token_colors(color)
-        pygame.draw.arc(surf, self._tint(border, 70), arc, 0, 2 * math.pi, 2)
+        # Background "track" is a neutral dim tone, NOT the team colour at
+        # lower alpha -- the old version tinted the *same* hue for the empty
+        # portion, so against a coloured board square the whole ring just
+        # read as one solid circle regardless of the actual fraction. Only
+        # the foreground arc (the real "how much is filled") uses the team
+        # colour, so partial fractions are visibly partial.
+        pygame.draw.arc(surf, self._tint(theme.TEXT_DIM, 140), arc, 0, 2 * math.pi, ring_w)
         start = math.pi / 2
-        pygame.draw.arc(surf, border, arc, start - 2 * math.pi * frac, start, 4)
-        lab = self.fonts["tiny"].render(render.frac_str(ghost.prob), True, border)
-        surf.blit(lab, (rect.centerx - lab.get_width() // 2, rect.bottom - lab.get_height() - 2))
+        pygame.draw.arc(surf, border, arc, start - 2 * math.pi * frac, start, ring_w)
+        # The fraction text itself sits on a small HOLO_BODY chip and reads in
+        # HOLO_INK -- the token's own body/ink pair, not the neon team colour
+        # -- since drawing it bare in `border` directly on the neon ring/grid
+        # made it blend in and become illegible (the original bug report).
+        # Reuses BaseSkin._chip (same helper Clarity uses) rather than a
+        # bespoke alpha-surface build, so the text centring is identical to
+        # Clarity's already-correct behaviour.
+        self._chip(surf, render.frac_str(ghost.prob), (rect.centerx, rect.bottom - 12),
+                   self.HOLO_BODY, self.HOLO_INK)
 
     def draw_legal(self, surf, app, legal, warnings):
         r = int(SQUARE * 0.30)
