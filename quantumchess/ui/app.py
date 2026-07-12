@@ -15,11 +15,11 @@ import chess
 import pygame
 
 from .. import check, rules
-from ..collapse import resolve_move, resolve_split
+from ..collapse import resolve_mass_move, resolve_move, resolve_split
 from ..config import GameConfig
 from ..model import QuantumBoard
 from ..persistence import load_game, save_game
-from ..rules import MoveKind, Split
+from ..rules import MassMove, MoveKind, Split
 from . import render, theme
 from .animation import Token, build_animation
 from .menu import Menu
@@ -38,6 +38,16 @@ class App:
         self.mode = "move"            # "move" | "split"
         self.selected = None          # square with a selected ghost
         self.split_pick_a = None      # first chosen split destination
+        # Mass-move planning (the "mass movement" dial): while planning, `plan`
+        # maps every ghost's source square -> its chosen destination (defaults
+        # to "stay" = source), `plan_active` is the ghost currently being
+        # assigned, and `plan_piece` is the piece being planned. See
+        # collapse.resolve_mass_move.
+        self.plan = None              # dict[from_sq -> to_sq] | None
+        self.plan_active = None       # from_sq of the ghost being assigned
+        self.plan_piece = None        # piece_id being planned
+        self.plan_promo = {}          # {from_sq -> promotion ptype} for promoting legs
+        self._pending_plan_promo = None  # (from_sq, to_sq) awaiting a promotion pick
         self._pending_promotion = None  # (from_sq, to_sq, [candidate Moves]) | None
         self._confirm_surrender = False  # armed by one Surrender click, fired by the next
         self._confirm_quit = False    # armed by one Quit click, fired by the next
@@ -107,22 +117,101 @@ class App:
         return [m for m in rules.ghost_destinations(self.qb, self.selected)
                 if m.to_square == square]
 
+    # ------------------------------------------------------- mass-move planning
+    def can_mass(self) -> bool:
+        return self.config.mass_movement
+
+    def is_planning(self) -> bool:
+        return self.plan is not None
+
+    def _begin_plan(self, piece_id):
+        """Enter mass-move planning for ``piece_id`` -- every ghost starts
+        assigned to 'stay' (its own square); the player then reassigns any of
+        them and confirms."""
+        self.plan = {g.square: g.square for g in self.qb.ghosts_of(piece_id)}
+        self.plan_active = None
+        self.plan_piece = piece_id
+        self.plan_promo = {}
+        self._pending_plan_promo = None
+        self.selected = None
+        self.split_pick_a = None
+
+    def cancel_plan(self):
+        self.plan = None
+        self.plan_active = None
+        self.plan_piece = None
+        self.plan_promo = {}
+        self._pending_plan_promo = None
+
+    def _is_promo_leg(self, from_sq, to_sq) -> bool:
+        """True if aiming the ghost on ``from_sq`` at ``to_sq`` is a promoting
+        pawn push (so the player must pick a promotion piece for this leg)."""
+        return any(m.to_square == to_sq and m.promotion is not None
+                   for m in rules.ghost_destinations(self.qb, from_sq))
+
+    def plan_legal(self):
+        """dict[to_square -> 'move'|'merge'|'contact'] for the ghost currently
+        being assigned (``plan_active``), including its own square (stay). A
+        CAPTURE_SOLID is tagged risky ('contact') like in split mode -- a mass
+        leg's mover isn't guaranteed present, so even a solid capture is a
+        gamble settled by the single roll."""
+        if self.plan is None or self.plan_active is None:
+            return {}
+        by_square = {self.plan_active: "move"}
+        for m in rules.ghost_destinations(self.qb, self.plan_active):
+            by_square[m.to_square] = "merge" if m.kind == MoveKind.MERGE else (
+                "contact" if m.kind in (MoveKind.CONTACT, MoveKind.CAPTURE_SOLID) else "move")
+        return by_square
+
+    def _handle_plan_click(self, square):
+        if self.plan_active is not None:
+            active = self.plan_active
+            if square == active:
+                self.plan[active] = active        # revert to "stay"
+                self.plan_promo.pop(active, None)
+                self.plan_active = None
+                return
+            if square in self.plan_legal():
+                if self._is_promo_leg(active, square):
+                    # defer the assignment until the player picks a promotion
+                    self._pending_plan_promo = (active, square)
+                else:
+                    self.plan[active] = square
+                    self.plan_promo.pop(active, None)
+                self.plan_active = None
+                return
+            if square in self.plan:
+                self.plan_active = square         # edit a different ghost instead
+                return
+            self.plan_active = None               # clicked nothing useful
+            return
+        if square in self.plan:
+            self.plan_active = square
+            return
+        # clicking a *different* superposed own piece switches to planning it
+        g = self._own_ghost_at(square)
+        if g is not None and self.can_mass() and len(self.qb.ghosts_of(g.piece_id)) > 1:
+            self._begin_plan(g.piece_id)
+
     # ------------------------------------------------------------- check odds
     def _check_readout(self):
-        """One ``(text, color)`` line per side for the side panel, reporting
-        each king's aggregate check probability (see ``quantumchess.check``).
-        Danger red when a capture is threatened, dim when safe. Cached per
-        board change (``_ply``) so it isn't recomputed every frame."""
+        """One ``(text, color)`` line per side for the side panel, reporting the
+        enemy's strongest single move against each king (see
+        ``quantumchess.check``) plus a short label naming that move. Danger red
+        when a capture is threatened, dim when safe. Cached per board change
+        (``_ply``) so it isn't recomputed every frame."""
         if self._readout_ply == self._ply:
             return self._readout
         lines = []
+        mass = self.config.mass_movement
         for color in (chess.WHITE, chess.BLACK):
             name = self.config.team_name(color)
-            prob = check.check_probability(self.qb, color)
-            if prob == 0:
+            threat = check.strongest_threat(self.qb, color, mass)
+            if threat is None or threat.prob == 0:
                 lines.append((f"{name}: {theme.TERMS['safe_word']}", theme.TEXT_DIM))
             else:
-                lines.append((f"{name}: {theme.TERMS['check_word']} {render.frac_str(prob)}",
+                lines.append((f"{name}: {theme.TERMS['check_word']} "
+                              f"{render.frac_str(threat.prob)} ({threat.describe()})",
                               theme.EVENT_ABSENT_COLOR))
         self._readout_ply, self._readout = self._ply, lines
         return lines
@@ -137,10 +226,11 @@ class App:
         key = (self.selected, self._ply)
         if self._sc_cache_key == key:
             return self._sc_cache
-        baseline = check.check_probability(self.qb, self.qb.turn)
+        mass = self.config.mass_movement
+        baseline = check.check_probability(self.qb, self.qb.turn, mass)
         warnings = {}
         for m in rules.ghost_destinations(self.qb, self.selected):
-            resulting = check.move_self_check(self.qb, m)
+            resulting = check.move_self_check(self.qb, m, mass)
             if resulting > baseline:
                 warnings[m.to_square] = resulting
         self._sc_cache_key, self._sc_cache = key, warnings
@@ -182,6 +272,7 @@ class App:
     def toggle_mode(self):
         if not self.can_split():
             return
+        self.cancel_plan()            # leaving move mode abandons any mass-move plan
         self.mode = "split" if self.mode == "move" else "move"
         self.split_pick_a = None
 
@@ -206,6 +297,10 @@ class App:
             self._confirm_surrender = False
         elif self._pending_promotion is not None:
             self._pending_promotion = None
+        elif self._pending_plan_promo is not None:
+            self._pending_plan_promo = None   # back out of the promo pick, keep the plan
+        elif self.plan is not None:
+            self.cancel_plan()
         elif self.split_pick_a is not None:
             self.split_pick_a = None
         elif self.selected is not None:
@@ -239,6 +334,7 @@ class App:
         self.mode = "move"
         self.selected = None
         self.split_pick_a = None
+        self.cancel_plan()
         self._pending_promotion = None
         self._confirm_surrender = False
         self._confirm_quit = False
@@ -268,6 +364,7 @@ class App:
         theme.apply_theme(config.theme, config.white_color, config.black_color)
         self.selected = None
         self.split_pick_a = None
+        self.cancel_plan()
         self._pending_promotion = None
         self._confirm_surrender = False
         self._confirm_quit = False
@@ -372,14 +469,46 @@ class App:
             self.toggle_mode()
             return
 
+        # Mass-move planning takes over the board until the player confirms or
+        # cancels (the confirm/cancel buttons float over the board, so they're
+        # hit-tested before board squares).
+        if self.is_planning():
+            if self._pending_plan_promo is not None:
+                choice = render.promotion_choice_at(pos)
+                if choice is not None:
+                    frm, to = self._pending_plan_promo
+                    self.plan[frm] = to
+                    self.plan_promo[frm] = choice
+                    self._pending_plan_promo = None
+                return
+            controls = render.mass_controls_rects()
+            if controls["confirm"].collidepoint(pos):
+                self._confirm_plan()
+                return
+            if controls["cancel"].collidepoint(pos):
+                self.cancel_plan()
+                return
+            square = render.square_at_pixel(pos)
+            if square is not None:
+                self._handle_plan_click(square)
+            return
+
         square = render.square_at_pixel(pos)
         if square is None:
             return
 
         if self.selected is None:
-            if self._own_ghost_at(square) is not None:
-                self.selected = square
-                self.split_pick_a = None
+            g = self._own_ghost_at(square)
+            if g is not None:
+                # With the mass-movement dial on, selecting a *superposed* piece
+                # opens planning instead of a single-ghost move; a solid piece
+                # (one ghost) still moves in the ordinary one-click way.
+                if self.mode == "move" and self.can_mass() \
+                        and len(self.qb.ghosts_of(g.piece_id)) > 1:
+                    self._begin_plan(g.piece_id)
+                else:
+                    self.selected = square
+                    self.split_pick_a = None
             return
 
         if square == self.selected and self.mode != "split":
@@ -488,6 +617,58 @@ class App:
         self.selected = None
         self.split_pick_a = None
         self.mode = "move"          # each new turn defaults back to move mode
+
+    def _confirm_plan(self):
+        """Resolve the planned mass move: build the ``MassMove``, roll it out
+        via ``resolve_mass_move`` (one measurement settles every conflict), log
+        it, and animate every ghost sliding to its planned destination (the
+        winning ghost lands solid; losers fade in their flash beats)."""
+        piece_id = self.plan_piece
+        assignments = tuple(self.plan.items())
+        label = self._piece_label(piece_id)
+        color = self.qb.pieces[piece_id].color
+        ptype = self.qb.pieces[piece_id].ptype
+        src_prob = {g.square: g.prob for g in self.qb.ghosts_of(piece_id)}
+
+        promotions = tuple((frm, promo) for frm, promo in self.plan_promo.items()
+                           if self.plan.get(frm) not in (None, frm))
+        before = self._snapshot_tokens()
+        result = resolve_mass_move(self.qb, MassMove(piece_id, assignments, promotions),
+                                   self.config, self.rng)
+        self._ply += 1
+
+        moved = [(f, t) for f, t in assignments if f != t]
+        legs = ", ".join(f"{chess.square_name(f)}->{chess.square_name(t)}"
+                         for f, t in moved) or "all ghosts hold"
+        self.log.append(f"{label} {theme.TERMS['mass_verb']}: {legs}.")
+        if result.captured_piece_ids:
+            names = ", ".join(self._piece_label(i) for i in result.captured_piece_ids)
+            self.log.append(f"{label} {theme.TERMS['capture_verb']} {names}.")
+        if result.final_square is not None:
+            self.log.append(f"{label} {theme.TERMS['mass_collapse_clause']} "
+                            f"{chess.square_name(result.final_square)}.")
+        if self.qb.game_over and self.qb.winner is not None:
+            winner = self.config.team_name(self.qb.winner)
+            self.log.append(f"** {winner} {theme.TERMS['win_suffix']} **")
+
+        # Every moving ghost slides out from its source (like a split's branches);
+        # the winner (if the piece collapsed) lands solid on its real square, the
+        # others travel as ghosts and are faded by the collapse events.
+        movers = []
+        for frm, to in assignments:
+            if frm == to:
+                continue
+            if result.chosen_from == frm and result.final_square is not None:
+                dest_tok = Token(piece_id, color, ptype, result.final_square,
+                                 src_prob[frm], True)
+            else:
+                dest_tok = Token(piece_id, color, ptype, to, src_prob[frm], False)
+            movers.append((dest_tok, frm))
+        self._begin_animation(before, movers, result.events)
+
+        self.cancel_plan()
+        self.selected = None
+        self.mode = "move"
 
     def choose_promotion(self, promo_piece):
         _from_sq, _to_sq, candidates = self._pending_promotion
@@ -616,6 +797,9 @@ class App:
             self.cycle_skin()
         if event.key == pygame.K_ESCAPE:
             self.cancel_selection()
+        if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER) and self.is_planning() \
+                and self._pending_plan_promo is None:
+            self._confirm_plan()
         if event.key == pygame.K_m:
             self.toggle_mode()
         if event.key == pygame.K_c:

@@ -28,6 +28,7 @@ class Menu:
         self.in_game = in_game
         self.collapse_mode = CollapseMode.FULL
         self.splitting_enabled = True
+        self.mass_movement = False
         self.seed = random.SystemRandom().randrange(1_000_000)
 
         self.theme_name = "origin"
@@ -40,6 +41,7 @@ class Menu:
         if initial_config is not None:
             self.collapse_mode = initial_config.collapse_mode
             self.splitting_enabled = initial_config.splitting_enabled
+            self.mass_movement = initial_config.mass_movement
             self.seed = initial_config.seed
             self.theme_name = initial_config.theme
             self.white_name = initial_config.white_name
@@ -57,7 +59,8 @@ class Menu:
         cx = w // 2
         self.collapse_full_rect = pygame.Rect(cx - 220, 150, 200, 44)
         self.collapse_partial_rect = pygame.Rect(cx + 20, 150, 200, 44)
-        self.split_toggle_rect = pygame.Rect(cx - 100, 214, 200, 44)
+        self.split_toggle_rect = pygame.Rect(cx - 220, 214, 200, 44)
+        self.mass_toggle_rect = pygame.Rect(cx + 20, 214, 200, 44)
 
         self.theme_rects = {
             "origin": pygame.Rect(cx - 220, 296, 200, 44),
@@ -103,6 +106,7 @@ class Menu:
     def _build_config(self):
         return GameConfig(collapse_mode=self.collapse_mode,
                           splitting_enabled=self.splitting_enabled,
+                          mass_movement=self.mass_movement,
                           seed=self.seed,
                           theme=self.theme_name,
                           white_name=self.white_name.strip() or "White",
@@ -131,6 +135,8 @@ class Menu:
             self.collapse_mode = CollapseMode.PARTIAL
         elif self.split_toggle_rect.collidepoint(pos):
             self.splitting_enabled = not self.splitting_enabled
+        elif self.mass_toggle_rect.collidepoint(pos):
+            self.mass_movement = not self.mass_movement
         elif self.theme_rects["origin"].collidepoint(pos):
             self.theme_name = "origin"
         elif self.theme_rects["cyberpunk"].collidepoint(pos):
@@ -263,6 +269,9 @@ class Menu:
         self._button(self.split_toggle_rect,
                     f"Splitting: {'On' if self.splitting_enabled else 'Off'}",
                     self.splitting_enabled)
+        self._button(self.mass_toggle_rect,
+                    f"Mass moves: {'On' if self.mass_movement else 'Off'}",
+                    self.mass_movement)
 
         theme_caption = self.font_small.render("Board theme:", True, theme.TEXT_DIM)
         self.screen.blit(theme_caption, theme_caption.get_rect(center=(w // 2, self.theme_rects["origin"].y - 18)))

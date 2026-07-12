@@ -125,7 +125,8 @@ class BaseSkin:
         text -- here the skins want the number, to size a bar/gauge."""
         if self._cv_key == app._ply:
             return self._cv
-        vals = [(app.config.team_name(c), check.check_probability(app.qb, c), c)
+        mass = app.config.mass_movement
+        vals = [(app.config.team_name(c), check.check_probability(app.qb, c, mass), c)
                 for c in (chess.WHITE, chess.BLACK)]
         self._cv_key, self._cv = app._ply, vals
         return vals
@@ -168,6 +169,8 @@ class BaseSkin:
         status = ""
         if app.is_animating():
             status = self.draw_collapse(surf, app)
+        elif app.is_planning():
+            status = self.draw_plan(surf, app)
         else:
             legal = app._legal_by_square()
             warnings = app._selfcheck_by_square() if app.show_check else {}
@@ -181,7 +184,7 @@ class BaseSkin:
         check_lines = app._check_readout() if app.show_check else None
         self.draw_panel(surf, app, status, check_lines)
 
-        if app._pending_promotion is not None:
+        if app._pending_promotion is not None or app._pending_plan_promo is not None:
             self.draw_promotion(surf, app)
 
     # ------------------------------------------------------------ background
@@ -280,6 +283,24 @@ class BaseSkin:
         if warnings:
             for sq, prob in warnings.items():
                 render._draw_danger_marker(surf, sq, prob, self.fonts)
+
+    # -------------------------------------------------------- mass-move plan
+    def draw_plan(self, surf, app):
+        """Draw the in-progress mass-move plan: sibling web + aura/active rings
+        under the pieces, the active ghost's legal targets in this skin's own
+        dot/ring language, then the assignment arrows over the pieces and the
+        floating Confirm/Cancel controls. Returns a status prompt."""
+        self.draw_sibling_web(surf, app)
+        render.draw_plan_rings(surf, app.plan, app.plan_active, app.plan_piece)
+        self.draw_legal(surf, app, app.plan_legal(), {})
+        self.draw_pieces(surf, app)
+        render.draw_plan_arrows(surf, app.plan, app.plan_piece)
+        render.draw_mass_controls(surf, self.fonts)
+        if app._pending_plan_promo is not None:
+            return "Choose promotion for this ghost: click a piece"
+        if app.plan_active is None:
+            return "Mass move: click a ghost to aim it, then Confirm"
+        return "Mass move: click this ghost's target (or itself to hold)"
 
     # ------------------------------------------------------------- collapse
     def _draw_anim_token(self, surf, tok, center, alpha_mult=1.0):

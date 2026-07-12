@@ -59,6 +59,24 @@ class Split:
     to_b: int
 
 
+@dataclass(frozen=True)
+class MassMove:
+    """Move *every* ghost of one superposed piece in a single planned turn (the
+    optional "mass movement" dial -- see ``collapse.resolve_mass_move``).
+
+    ``assignments`` is one ``(from_square, to_square)`` per current ghost of the
+    piece; ``to_square == from_square`` means that ghost stays put. Resolution
+    measures the whole piece *once* to settle any conflicts (a destination that
+    contacts another piece), rather than collapsing every ghost.
+
+    ``promotions`` (``(from_square, promotion_ptype)`` pairs) records the piece
+    a promoting pawn leg should become -- the player picks it per leg in the UI,
+    exactly like a single move, rather than defaulting to a queen."""
+    piece_id: int
+    assignments: tuple[tuple[int, int], ...]
+    promotions: tuple[tuple[int, int], ...] = ()
+
+
 # --------------------------------------------------------------------- oracle
 def _solids_board(qb: QuantumBoard) -> chess.Board:
     """A python-chess board holding only the solid (certain) pieces."""
@@ -379,6 +397,27 @@ def split_destination_castle_rook(qb: QuantumBoard, square: int, to_square: int
     for m in ghost_destinations(qb, square):
         if m.to_square == to_square:
             return m.castle_rook
+    return None
+
+
+def mass_assignment_move(qb: QuantumBoard, piece_id: int, from_square: int,
+                         to_square: int, promotion: Optional[int] = None) -> Optional[Move]:
+    """The classified ``Move`` for one ghost of a mass move, or ``None`` if the
+    ghost on ``from_square`` can't legally reach ``to_square``.
+
+    ``to_square == from_square`` is a "stay" -- a measurement-free ``RELOCATE``
+    onto its own square (nothing else can be there). Otherwise it's whichever
+    ``ghost_destinations`` move lands on ``to_square``. When that square is a
+    promotion rank the destination yields one candidate per promotion piece;
+    ``promotion`` selects which (as picked in the UI), defaulting to the first
+    candidate (a queen) if unspecified."""
+    if to_square == from_square:
+        return Move(piece_id, from_square, from_square, kind=MoveKind.RELOCATE)
+    for m in ghost_destinations(qb, from_square):
+        if m.to_square != to_square:
+            continue
+        if promotion is None or m.promotion == promotion:
+            return m       # first match (queen for a promo square when unspecified)
     return None
 
 

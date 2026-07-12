@@ -36,8 +36,8 @@ import chess
 from .config import CollapseMode, GameConfig
 from .model import Ghost, QuantumBoard
 from .rules import (
-    Move, MoveKind, Split, apply_move, remove_piece,
-    split_destination_castle_rook, split_destination_kind,
+    MassMove, Move, MoveKind, Split, apply_move, mass_assignment_move,
+    remove_piece, split_destination_castle_rook, split_destination_kind,
 )
 
 
@@ -69,6 +69,26 @@ class MoveResolution:
     fizzled: bool = False               # True: the mover ghost wasn't really there
     final_square: Optional[int] = None  # where the mover ended up (None if fizzled)
     captured_piece_ids: list[int] = field(default_factory=list)
+
+
+@dataclass
+class MassMoveResolution:
+    """Result of ``resolve_mass_move``. A mass move settles the *whole* piece's
+    conflicts with a single measurement, so unlike a plain move it never
+    "fizzles" -- it either stays superposed over its safe squares or collapses
+    onto one square.
+
+    ``final_square`` is that one solid square when the piece collapsed (a
+    conflicting slide came up real, or FULL mode resolved a dodge to one
+    location); ``None`` means the piece stayed superposed (a PARTIAL-mode dodge,
+    or a plan with no conflicts at all). ``chosen_from`` is the source square of
+    the ghost that turned out to be the real one (only set when the piece
+    collapsed) so the UI can slide *that* ghost to ``final_square`` while the
+    others fade at their planned destinations."""
+    events: list[CollapseEvent] = field(default_factory=list)
+    captured_piece_ids: list[int] = field(default_factory=list)
+    final_square: Optional[int] = None
+    chosen_from: Optional[int] = None
 
 
 @dataclass
@@ -436,3 +456,172 @@ def resolve_split(qb: QuantumBoard, split: Split, config: GameConfig,
         qb.turn = not qb.turn
 
     return SplitResolution(events=events, captured_piece_ids=captured_ids)
+
+
+@dataclass
+class _MassEntry:
+    """One ghost's planned leg of a mass move, classified against the board as
+    it stood before anything moved."""
+    from_sq: int
+    to_sq: int
+    move: Move
+    prob: Fraction
+    is_conflict: bool
+
+
+def _roll_entry(rng: random.Random, entries: list[_MassEntry]) -> _MassEntry:
+    """Pick which ghost the piece *really* is, weighted by probability (they sum
+    to 1). A single categorical draw settles the whole superposition -- the
+    generalization of a single mover's ``_flip``."""
+    r = rng.random()
+    cum = Fraction(0)
+    for e in entries:
+        cum += e.prob
+        if r < cum:
+            return e
+    return entries[-1]   # float rounding guard: r just under 1
+
+
+def _apply_mass_relocation(qb: QuantumBoard, pid: int, entries: list[_MassEntry],
+                           renormalize: bool = False) -> None:
+    """Relocate a set of (conflict-free) ghost legs simultaneously: sum the
+    probability landing on each destination, then rebuild the piece's ghosts.
+    ``renormalize`` scales the survivors back to sum 1 (used when the conflicting
+    legs have been dropped)."""
+    dest_prob: dict[int, Fraction] = {}
+    for e in entries:
+        dest_prob[e.to_sq] = dest_prob.get(e.to_sq, Fraction(0)) + e.prob
+    if renormalize:
+        total = sum(dest_prob.values())
+        dest_prob = {sq: p / total for sq, p in dest_prob.items()}
+    qb.ghosts = [g for g in qb.ghosts if g.piece_id != pid]
+    for sq, p in dest_prob.items():
+        qb.ghosts.append(Ghost(pid, sq, p))
+
+
+def _end_mass_turn(qb: QuantumBoard) -> None:
+    qb.ep_square = None            # a mass move never leaves an en-passant target
+    if not qb.game_over:
+        qb.turn = not qb.turn
+
+
+def resolve_mass_move(qb: QuantumBoard, mass: MassMove, config: GameConfig,
+                      rng: random.Random) -> MassMoveResolution:
+    """Move *every* ghost of one piece in a single planned turn (the "mass
+    movement" dial). See ``rules.MassMove`` and CLAUDE.md.
+
+    Each leg is classified against the pre-move board. A leg that contacts
+    another piece (or promotes a still-superposed pawn) is a *conflict*.
+
+      - No conflicts: every ghost just relocates (probabilities merge by
+        destination), no dice.
+      - Otherwise: one categorical roll picks where the piece really is.
+          * a *safe* square wins -> the conflicting legs vanish; the safe legs
+            survive (PARTIAL, renormalized) or the piece collapses solid onto
+            the winning square (FULL) -- obeying the match's collapse-mode dial.
+          * a *conflict* square wins -> the piece collapses solid there and that
+            one slide resolves like any CONTACT/CAPTURE_SOLID move (measuring the
+            enemy on its path), while every other ghost vanishes.
+
+    So one measurement conclusively clears the whole superposition's conflicts.
+    """
+    if qb.game_over:
+        raise RuntimeError("game is already over")
+
+    pid = mass.piece_id
+    mover_color = qb.pieces[pid].color
+
+    # Classify every leg *before* touching has_moved (same ordering care as split).
+    promo_by_from = dict(mass.promotions)
+    ghosts_by_sq = {g.square: g for g in qb.ghosts_of(pid)}
+    entries: list[_MassEntry] = []
+    for from_sq, to_sq in mass.assignments:
+        g = ghosts_by_sq.get(from_sq)
+        if g is None:
+            raise ValueError(f"no ghost of piece {pid} on square {from_sq}")
+        move = mass_assignment_move(qb, pid, from_sq, to_sq, promo_by_from.get(from_sq))
+        if move is None:
+            raise ValueError(f"illegal mass-move leg {from_sq}->{to_sq}")
+        is_conflict = (move.kind in (MoveKind.CONTACT, MoveKind.CAPTURE_SOLID)
+                       or move.promotion is not None)
+        entries.append(_MassEntry(from_sq, to_sq, move, g.prob, is_conflict))
+    if len(entries) != len(ghosts_by_sq):
+        raise ValueError("a mass move must assign every ghost of the piece exactly once")
+
+    qb.pieces[pid].has_moved = True
+    res = MassMoveResolution()
+    conflicts = [e for e in entries if e.is_conflict]
+
+    # --- no conflict: pure simultaneous relocation, nothing to measure.
+    if not conflicts:
+        _apply_mass_relocation(qb, pid, entries)
+        _end_mass_turn(qb)
+        return res
+
+    chosen = _roll_entry(rng, entries)
+
+    # --- the piece dodged onto a safe square.
+    if not chosen.is_conflict:
+        if config.collapse_mode == CollapseMode.PARTIAL:
+            safe = [e for e in entries if not e.is_conflict]
+            dropped = tuple((e.to_sq, e.prob) for e in conflicts)
+            _apply_mass_relocation(qb, pid, safe, renormalize=True)
+            res.events.append(CollapseEvent("mass", pid, chosen.to_sq, chosen.prob,
+                                            True, removed=dropped))
+        else:  # FULL: collapse the whole piece onto the rolled square.
+            dropped = tuple((e.to_sq, e.prob) for e in entries if e is not chosen)
+            winner = qb.ghost_at(chosen.from_sq)
+            _collapse_positive(qb, pid, winner)      # drop siblings, prob -> 1
+            winner.square = chosen.to_sq
+            res.events.append(CollapseEvent("mover", pid, chosen.to_sq, chosen.prob,
+                                            True, removed=dropped))
+            res.final_square = chosen.to_sq
+            res.chosen_from = chosen.from_sq
+        _end_mass_turn(qb)
+        return res
+
+    # --- a conflicting leg won: the piece is solid on that slide; others vanish.
+    dropped = tuple((e.to_sq, e.prob) for e in entries if e is not chosen)
+    winner = qb.ghost_at(chosen.from_sq)
+    _collapse_positive(qb, pid, winner)              # confirm solid @ source, drop the rest
+    move = chosen.move
+    captured_ids: list[int] = []
+    walk_events: list[CollapseEvent] = []
+
+    if move.kind == MoveKind.CAPTURE_SOLID:
+        stop_square = move.to_square
+        winner.square = stop_square
+        if move.captured_piece_id is not None:
+            cap_ev = CollapseEvent("destination", move.captured_piece_id, stop_square,
+                                   Fraction(1), True)
+            cap_ev.removed = tuple((gg.square, gg.prob) for gg in qb.ghosts
+                                   if gg.piece_id == move.captured_piece_id
+                                   and gg.square != stop_square)
+            cap_ev.captured_square = stop_square
+            _capture(qb, move.captured_piece_id, mover_color)
+            captured_ids.append(move.captured_piece_id)
+            walk_events.append(cap_ev)
+        if move.promotion is not None:
+            qb.pieces[pid].ptype = move.promotion
+    elif move.kind == MoveKind.CONTACT:
+        stop_square = _walk_contact(qb, pid, mover_color, chosen.from_sq, move.to_square,
+                                    config, rng, walk_events, captured_ids)
+        winner.square = stop_square
+        if move.promotion is not None and stop_square == move.to_square:
+            qb.pieces[pid].ptype = move.promotion
+    else:  # a quiet RELOCATE/MERGE leg that was a conflict only because it promotes
+        stop_square = move.to_square
+        winner.square = stop_square
+        if move.promotion is not None:
+            qb.pieces[pid].ptype = move.promotion
+
+    # Mover-confirm event first (fades the other ghosts, solidifies the winner at
+    # its landing square), then the enemy measurement(s) from the slide.
+    res.events.append(CollapseEvent("mover", pid, stop_square, chosen.prob, True,
+                                    removed=dropped))
+    res.events.extend(walk_events)
+    res.captured_piece_ids = captured_ids
+    res.final_square = stop_square
+    res.chosen_from = chosen.from_sq
+    _end_mass_turn(qb)
+    return res

@@ -21,6 +21,10 @@ really was.
   displays how likely a king is to be capturable next turn.)
 - **A piece superposes only with its own ghosts — no cross-piece entanglement, ever.**
 - **A turn = one action on one ghost:** move it, or *split* it into two (`p → p/2, p/2`).
+  (The optional **`mass_movement`** dial, added 2026-07-11, relaxes this: with it
+  on, a *superposed* piece may instead move **all** of its ghosts in one planned
+  turn — see `collapse.resolve_mass_move` below. Off by default; it's the
+  independent-target "all-ghosts move" variant of a previously-deferred dial.)
 - **Collapse modes (match dial)** — behaviour on a *negative* measurement ("not here"):
   - *Partial*: only the contacted ghost vanishes; the rest renormalize.
   - *Full*: resolve the whole piece to one location; drop the others.
@@ -38,9 +42,10 @@ really was.
   never superposed by this: it always makes one plain, deterministic
   relocation alongside whichever branch reaches the castle square, exactly
   mirroring a full-move castle's "rook follows only if the walk completes."
-- Deferred dials (documented, not yet built): all-ghosts move/split (symmetric or
-  independent), equal-`1/n` probabilities, exotic promotion/en-passant
-  interactions.
+- Deferred dials (documented, not yet built): all-ghosts *split*, symmetric
+  all-ghosts move, equal-`1/n` probabilities, exotic promotion/en-passant
+  interactions. (The **independent** all-ghosts *move* variant shipped
+  2026-07-11 as the `mass_movement` dial — see `resolve_mass_move`.)
 
 ## Architecture
 - **Engine is headless** — `quantumchess/` must not import `pygame`. UI is a thin
@@ -62,6 +67,17 @@ really was.
   (splitting into an enemy-occupied square is legal — see `resolve_split`
   below); `apply_split` itself stays the measurement-free fast path and raises
   if either destination needs a collapse.
+  **Mass movement** (added 2026-07-11): `MassMove(piece_id, assignments)` where
+  `assignments` is one `(from_square, to_square)` per current ghost of the piece
+  (`to == from` means "stay"). `mass_assignment_move(qb, pid, from, to)` returns
+  the classified `Move` for one leg (a "stay" is a measurement-free `RELOCATE`
+  on its own square; otherwise it's whichever `ghost_destinations` move lands on
+  `to`). A promoting pawn leg carries its chosen promotion piece via
+  `MassMove.promotions` (`(from_square, ptype)` pairs), which
+  `mass_assignment_move`'s `promotion` arg selects among the per-piece promotion
+  candidates — the player picks it per leg in the UI (same promotion picker as a
+  single move), defaulting to a queen only if unspecified. Resolution lives in
+  `collapse.resolve_mass_move`.
   **Castling** (added 2026-07-11, user asked "should I be able to castle here?"
   after a playtest reached a position where it should be legal): `Move` gained
   `castle_rook: Optional[tuple[rook_piece_id, rook_from, rook_to]]`, set only on
@@ -124,7 +140,10 @@ really was.
 - `textview.py` — headless ASCII board (`*B*` = ghost) + exact-fraction legend.
 - `config.py` — `GameConfig` (dials), `CollapseMode`. Split out from `game.py` so
   `collapse.py` can import it without a circular dependency; re-exported from
-  `game.py` for convenience. Also carries the cosmetic (non-logic) match-setup
+  `game.py` for convenience. Carries `mass_movement: bool = False` (added
+  2026-07-11) — the optional dial enabling whole-superposition moves; enforced
+  at the UI layer (`App.can_mass`) like `splitting_enabled`, since the engine's
+  `resolve_mass_move` is dial-agnostic. Also carries the cosmetic (non-logic) match-setup
   fields: `theme` ("origin"/"cyberpunk"), `white_name`/`black_name`,
   `white_color`/`black_color` (RGB tuples, only meaningful for cyberpunk), plus
   `team_name(color)`/`team_color(color)` helpers keyed off the python-chess
@@ -198,44 +217,87 @@ really was.
   rook only relocates if `_walk_contact`'s `stop_square` equals the king's
   full destination, and needs no measurement of its own since `rook_to` is
   always one of the squares the king's own walk already resolved.
+  `resolve_mass_move` (added 2026-07-11, for the `mass_movement` dial — user:
+  "move all ghosts in [a piece's] superposition in one move ... resolve any
+  potential conflicts without the need to collapse all ghosts"): each leg of a
+  `MassMove` is classified against the pre-move board (via
+  `rules.mass_assignment_move`) as *safe* (`RELOCATE`/`MERGE`) or a *conflict*
+  (`CONTACT`/`CAPTURE_SOLID`, or a still-superposed pawn promoting — promotions
+  need a measurement, so they count as conflicts). **No conflicts ⇒ every ghost
+  just relocates** (probabilities merge by destination, no dice, ep cleared —
+  the same "quiet move is instant" rule as elsewhere). **≥1 conflict ⇒ one
+  categorical roll** (`_roll_entry`, weighted by each ghost's `prob`, which sum
+  to 1 — the generalization of a single mover's Bernoulli `_flip`) picks where
+  the piece *really* is. If the winning leg is **safe**, the conflicting ghosts
+  vanish and — **obeying the match's collapse-mode dial** — PARTIAL keeps the
+  safe ghosts renormalized (piece stays superposed) while FULL collapses the
+  whole piece onto the rolled square (`_collapse_positive`); enemies on the
+  *dropped* legs are never measured (the piece dodged). If the winning leg is a
+  **conflict**, the piece goes solid on that slide (`_collapse_positive` drops
+  every other ghost) and the slide resolves exactly like a `resolve_move`
+  `CONTACT`/`CAPTURE_SOLID` — reusing `_walk_contact` to measure the enemy on
+  its path ("measure the enemy too"), so it can capture or stop short. Returns a
+  `MassMoveResolution` (events for the UI animation, `captured_piece_ids`, plus
+  `final_square`/`chosen_from` — the solid landing and winning ghost's source
+  when the piece collapsed, so `App._confirm_plan` can slide that ghost to its
+  real square while the losers fade). Provably reduces to today's single move
+  (move one ghost, hold the rest) in both modes: `P(solid at s) = p_s` either
+  way. Headless; covered by `tests/test_mass_move.py`.
 - `check.py` — **advisory** check-probability overlay (added 2026-07-11, user
   asked for an interface to "signal check and partial check, like 3/8 to be a
   check" plus a warning before a move exposes their own king). Purely
   informational — no rule impact (see locked decision above). Headless, exact
   `Fraction`s, **no RNG** (it's the *expected* danger, not a rolled outcome).
-  Metric = **aggregate danger, conditioned on the king's location** (chosen
-  with the user via `AskUserQuestion`; the location-conditioning refined
-  2026-07-11 after a playtest where a superposed king cornered on *every* square
-  it could occupy still read a spurious `7/9` instead of a certain check). The
-  king is in exactly **one** of its ghost squares — mutually exclusive locations
-  whose weights `q_s` (the king ghost `prob`s) sum to 1 — so:
-  `check_probability(qb, color) = Σ_s q_s · (1 − ∏(1 − a_i) over threats on s)`.
-  Here `a_i` is one threat's **attacker-side** success probability = (attacker
-  ghost `prob`) × ∏(each *other* piece's ghost on the path is absent, `1 − prob`)
-  — it **no longer** includes the king ghost's own `prob`; that factor is now the
-  mutually-exclusive location weight `q_s` instead. Within a fixed king square the
-  distinct enemy attackers are still combined `1 − ∏(1 − a_i)` (independent, a
-  mild overestimate — the enemy really gets one move — but the agreed simple
-  model); averaging *across* squares with the true weights `q_s` is what makes a
-  fully-covered king read `1`. **The old flat `1 − ∏(1 − p_i)` over all threats
-  (with `p_i = a_i · q_s` folded in) was the bug**: it treated the king's own
-  presence on different squares as independent Bernoullis and under-reported when
-  several king ghosts were threatened at once. `Threat` now carries `prob` (=`a_i`,
-  attacker-side) and `king_prob` (=`q_s`) as separate fields; `check_probability`
-  groups threats by `king_square` before weighting. Existing solid-king /
-  single-exposed-ghost cases are numerically unchanged (only *multiply*-threatened
-  superposed kings differ). Threats are enumerated by **reusing `rules.ghost_destinations`** for every
-  enemy ghost and keeping the moves whose `to_square` holds a king ghost — so it
-  automatically tracks whatever the engine can actually capture (incl. quirks
-  like a pawn's forward-push CONTACT capture onto a *superposed* king; solid
-  blockers already prune the ray via the oracle board, so only partial ghosts
-  enter the absent-product). `move_self_check(qb, move)` answers "does this move
-  expose *my* king?": it builds a hypothetical board via `_hypothetical_after`
+  Metric (**rewritten 2026-07-11** after a playtest showed the readout
+  over-counting — the user: "it should represent the probability that the king
+  will be captured if opponent plays his strongest move"): the danger is now the
+  **single strongest enemy move**, not any aggregate over independent threats —
+  `check_probability(qb, color) = max over every enemy move m of P(m captures the king)`.
+  The opponent gets **one** move, so two separate attackers aiming at the king
+  do **not** compound (the earlier metric's within-square `1 − ∏(1 − a_i)` was
+  exactly that bug — it summed threats the enemy can't all play at once). Each
+  move's capture probability is computed **exactly** from the engine's own path-
+  collapse rules (`strongest_threat`/`_path_capture_part`): for an enemy ghost of
+  presence `p` sliding `from→to` along path squares, walk the path in travel
+  order and take
+  `p · Σ over king ghosts on square s_k of q(s_k) · ∏ over each *other* piece X
+  with ghosts strictly before s_k of (1 − X's total ghost mass there)`. King
+  locations are **mutually exclusive** (weights `q(s_k)` sum to 1), so conditioned
+  on "king is on `s_k`" every *earlier* king ghost on the path is empty and drops
+  out of the blocker product — only non-king, non-attacker pieces block; the
+  attacker's own ghosts are passed through. This makes a **single slide that
+  sweeps several king ghosts** (e.g. a rook down a file the king is superposed
+  along) read as a certain capture, while two king ghosts needing two *different*
+  moves take the **max** (no sum). A blocking piece with several ghosts on the
+  path blocks with prob = the *sum* of those masses (its locations are mutually
+  exclusive too — the sequential renormalization works out to exactly this),
+  while distinct pieces are independent, hence the ∏ over X. Moves are enumerated
+  by **reusing `rules.ghost_destinations`** (solid blockers already prune each ray
+  via the oracle board, so only partial ghosts enter the products), and the
+  metric ignores `move.kind` entirely — it only needs `from`/`to` and the path,
+  so it automatically covers a solid-king CAPTURE_SOLID, a superposed-king
+  CONTACT, a pawn's diagonal, etc. **Mass movement** (when the dial is on, passed
+  as `mass_movement=True`): a superposed enemy piece's strongest king threat is
+  `Σ over its ghosts g of p_g · (best single leg of g, assuming g is certainly
+  present)` — a *sum* over the mutually-exclusive categorical-roll outcomes, each
+  taking that ghost's best-capturing destination (the winning ghost resolves its
+  slide with the mover certain). This can strictly beat any single move (two
+  ghosts covering the king from opposite sides guarantee a capture) and is folded
+  into the same max. `strongest_threat` returns a `KingThreat` (prob + attacker +
+  `from`/`to`, or `is_mass`) with a `describe()` label ("R a4->e1" / "R mass") so
+  the side-panel readout can **name the strongest move**, not just its
+  probability. `move_self_check(qb, move, mass_movement=False)` answers "does this
+  move expose *my* king?": it builds a hypothetical board via `_hypothetical_after`
   (deep-copy, relocate the mover to its destination, drop a solid piece it
   captures outright, drag a castling rook) and re-runs `check_probability` for
   the mover's colour — catching both moving into fire and discovered exposure
   (a blocker leaving a line). It approximates the move as simply completing;
-  the random collapse a CONTACT move might itself trigger is not rolled.
+  the random collapse a CONTACT move might itself trigger is not rolled. UI wiring
+  (`app.py::_check_readout`/`_selfcheck_by_square`, `ui/skins/base.py::_check_values`)
+  threads `config.mass_movement` through so the readout/warnings account for the
+  dial. `tests/test_check.py` asserts the new max-not-compound semantics (two
+  half-threats → 1/2 not 3/4; two king ghosts on two lines → max 2/3; one slide
+  sweeping two king ghosts → certain 1; a mass move beating a single move → 1).
 - `game.py` — `random_selfplay` (M1, classical-only driver used by M1 tests/demo).
 - `persistence.py` — save/load a game to/from JSON. Headless like the rest of
   the engine; `to_dict`/`from_dict` snapshot the board (pieces + ghosts, exact
@@ -454,6 +516,31 @@ really was.
     seeds the rng from `config.seed`, deterministic like a menu-driven start)
     — resets the board with the edited dials, exactly like starting over from
     the pre-game menu.
+    **Mass-move planning** (added 2026-07-11, `mass_movement` dial): when the
+    dial is on, clicking a *superposed* own piece in move mode opens planning
+    instead of a one-click move (a solid piece still moves in one click —
+    planning only makes sense for >1 ghost). `self.plan` maps every ghost's
+    source square → its chosen destination (all default to "stay"),
+    `self.plan_active` is the ghost being aimed, `self.plan_piece` the piece.
+    `_handle_plan_click` cycles select-ghost → pick-target (or click the ghost
+    again to hold); `plan_legal()` gives the active ghost's targets in the
+    skin's own highlight style (a `CAPTURE_SOLID` is tagged risky, like split,
+    since a mass leg's mover isn't guaranteed present). Aiming a ghost *pawn* at
+    the promotion rank pops the ordinary promotion picker (`_pending_plan_promo`
+    holds the leg until a piece is clicked; `plan_promo[from]` records the
+    choice, cleared if that ghost is later re-aimed) so promotions are chosen,
+    not auto-queened. Confirm (a floating
+    `render.mass_controls_rects()` button over the board, or `Enter`) →
+    `_confirm_plan` builds the `MassMove`, calls `collapse.resolve_mass_move`,
+    logs it (`theme.TERMS['mass_verb']`/`'mass_collapse_clause'`), and animates
+    every moving ghost sliding out (winner lands solid, losers fade — same
+    `build_animation` path as a split's branches). Cancel (floating button /
+    `Escape`) or switching to split mode abandons the plan; the plan is
+    transient UI state (not persisted, cleared by `new_game`/`load_from`).
+    Planning is skin-agnostic — drawn centrally in `BaseSkin.draw`'s
+    `is_planning()` branch via `BaseSkin.draw_plan` + `render.draw_plan_rings`/
+    `draw_plan_arrows`/`draw_mass_controls`, so both skins get it without
+    touching their bespoke panels.
   - `skins/` — one drawing language per view (board + panel), see
     `UI_REDESIGN.md` for the full design history. Started 2026-07-11 as a
     3-variant live-switching demo (`demo_ui.py`, a separate script) to
@@ -477,8 +564,11 @@ really was.
     switch in Clarity, a `[TAB] VIEW` row in HUD) and a `"quit"` button
     (confirm-then-fire, ported from the retired classic path so removing it
     didn't silently drop the feature) in the same pass.
-  - `menu.py` — pre-game dial picker (collapse mode, splitting on/off, seed,
-    board theme, team names, team colours). `splitting_enabled` is enforced at
+  - `menu.py` — pre-game dial picker (collapse mode, splitting on/off, mass
+    moves on/off, seed, board theme, team names, team colours). The "Mass
+    moves" toggle (`mass_toggle_rect`, beside "Splitting", added 2026-07-11)
+    feeds `GameConfig.mass_movement` through `_build_config`/`initial_config`
+    the same way splitting does. `splitting_enabled` is enforced at
     this UI layer (`App.toggle_mode`), not inside the engine — the engine's
     split functions are dial-agnostic by design. Team-name fields are simple
     click-to-focus text inputs (`Menu.active_field` + `handle_keydown`, wired
@@ -552,7 +642,7 @@ really was.
 - Demo (M1 random game): `python demo_m1.py [seed]`
 - Demo (M2 superposition): `python demo_m2.py`
 - Demo (M3 collapse): `python demo_m3.py [seed]` — try seeds 1-5, each gives a different outcome
-- Tests: `python -m pytest -q`  (137 passing). UI tests need `SDL_VIDEODRIVER=dummy` in
+- Tests: `python -m pytest -q`  (164 passing). UI tests need `SDL_VIDEODRIVER=dummy` in
   the environment (set automatically at the top of `test_m4_ui.py`, but harmless to
   also export it yourself: `SDL_VIDEODRIVER=dummy python -m pytest -q`).
 - `HOW_TO_PLAY.md` (repo root) — player-facing rules/controls guide for the user and their friend.
@@ -772,6 +862,46 @@ really was.
       weights sum to 1) and averages `q_s · (1 − ∏(1 − a_i))` — the cornered
       king now correctly reads `1`. Solid-king / single-exposed-ghost cases are
       numerically unchanged. 137 tests passing.
+      Later 2026-07-11, an optional **mass movement** dial was added (user:
+      "move all ghosts in [a piece's] superposition in one move ... [if there
+      are] collisions, the game internally rolls where the particle really is
+      ... resolve any potential conflicts without the need to collapse all
+      ghosts") — see `config.py`/`rules.py`/`collapse.py`/`ui` writeups above
+      for the full mechanism (`MassMove`, `resolve_mass_move`'s single
+      categorical roll, the planning UI). Locked with the user beforehand: it
+      walks each ghost's **full path** (like normal path collapse), it **does
+      measure the contacted enemy** on the winning leg (reusing `_walk_contact`),
+      it **replaces** the single-ghost move for a superposed piece (holding
+      all-but-one ghost = today's move), and — after the user asked — it
+      **obeys the Full/Partial collapse-mode dial** in the "dodged onto a safe
+      square" branch (Partial keeps the rest superposed; Full collapses to the
+      one rolled square). A promoting pawn leg still **prompts for the promotion
+      piece** (per-leg picker, `MassMove.promotions`), also at the user's
+      request — no auto-queening. 161 tests passing
+      (`tests/test_mass_move.py` covers the engine — no-conflict relocation,
+      partial/full dodge, conflict capture, CONTACT enemy measurement,
+      promotion, king capture, validation; `tests/test_mass_move_ui.py` drives
+      the planning + promotion-pick flow headlessly).
+      Later 2026-07-11, the advisory check metric was **rewritten to "the enemy's
+      strongest single move"** (see `check.py` above) after a playtest where the
+      readout kept over-counting — the user: "it should represent the probability
+      that the king will be captured if opponent plays his strongest move." The
+      previous metric (aggregate danger, conditioned on the king's location,
+      `Σ_s q_s · (1 − ∏(1 − a_i))`) still compounded *independent* threats within
+      a king square, so two enemy pieces each half-threatening the same king read
+      3/4 when the opponent can only play one of them (best = 1/2). The new metric
+      takes the **max over every enemy move** of that move's exact capture
+      probability, walking each slide's path so a single move that sweeps several
+      king ghosts reads as certain while two threats needing two moves take the
+      max, not the sum. It also folds in a **mass-move term** when that dial is on
+      (a superposed attacker's roll-weighted best legs), and `strongest_threat`
+      returns a `KingThreat` whose `describe()` label lets the readout **name the
+      strongest move** ("CHECK 2/3 (R a4->e7)"). The old `Threat`/`threats_against`
+      internals were replaced by `strongest_threat`/`_path_capture_part`; the
+      public `check_probability`/`move_self_check` signatures gained an optional
+      `mass_movement` flag (UI passes `config.mass_movement`). 164 tests passing
+      (`tests/test_check.py` rewrote the two multi-threat cases and added the
+      one-slide-sweep, two-lines-take-max, and mass-move-beats-single tests).
 - [ ] **M5** — (menu dials already landed in M4; this milestone folds into it —
       remaining polish items only, e.g. richer dial explanations in-menu).
 - [ ] **M6** — polish pass (see below for what's left).

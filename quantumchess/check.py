@@ -5,39 +5,55 @@ an ordinary, capturable, splittable piece (locked design decision, see
 PLAN.md / CLAUDE.md). Nothing here changes that: this module is a purely
 *informational* overlay answering one question --
 
-    "How likely is it that the enemy could capture this king on their very
-     next move, given that both the king and any attacker may be superposed?"
+    "If it were the enemy's turn and they played their **single strongest
+     move**, how likely is it that this king gets captured?"
 
-Metric (chosen with the user): **aggregate danger**, computed by *conditioning
-on where the king actually is*. The king occupies exactly **one** of its ghost
-squares -- those locations are mutually exclusive, with weights (the ghost
-``prob`` values) that sum to 1. So the reported check probability is::
+Metric (chosen with the user): **the strongest single enemy move**::
 
-    sum over king squares s of  q_s * ( 1 - prod(1 - a_i)  over threats on s )
+    check_probability(qb, color) = max over every enemy move m of  P(m captures the king)
 
-where ``q_s`` is the king ghost's probability of *being* on ``s`` and ``a_i`` is
-the *attacker-side* success probability of one threat aimed at ``s`` (does **not**
-include the king's own presence -- that is already accounted for by ``q_s``).
-``1 - prod(1 - a_i)`` is the chance at least one attacker lands *given the king
-is on ``s``*, treating the distinct enemy attackers as independent (a mild
-overestimate, the agreed simple model). Averaging over ``s`` with the true,
-mutually-exclusive weights ``q_s`` is what makes a fully-covered king read as a
-certain (``1``) check rather than being spuriously discounted -- the old
-``1 - prod(1 - p_i)`` over *all* threats treated the king's own location on
-different squares as independent Bernoullis and under-reported when several of
-its ghosts were simultaneously threatened (a superposed king cornered on every
-square it could be on is dead for certain, and now shows it).
+Not a sum, not a compounded product over independent threats -- the opponent
+gets **one** move, so two separate attackers aiming at the king do *not* add up;
+the danger is whatever their best move alone achieves. Conversely, a single
+sliding move can sweep **several** king ghosts at once (path collapse measures
+every ghost it passes), and that *does* raise the number, because that one move
+really can catch the king wherever it turns out to be along the line.
 
-An attacker-side threat probability ``a_i`` is the product of the pieces that
-must "line up" for that capture to happen, *excluding* the king:
+Per-move capture probability (exact, no independence fudge *within* a move --
+the engine's own collapse rules give it directly). For an enemy ghost of
+presence ``p`` sliding ``from -> to`` along path squares ``s1..sn``::
 
-* the attacker ghost must materialise on its square  (its ``prob``), and
-* every *other* piece's ghost sitting between it and the king must be **absent**
-  (``1 - prob`` each -- if present it would block or be captured first).
+    P(m captures king) = p * SUM over king ghosts on square s_k of
+                                q(s_k) * PROD over each OTHER piece X with
+                                          ghosts strictly before s_k on the path:
+                                              ( 1 - (total of X's ghost mass there) )
+
+* ``q(s_k)`` is the king ghost's probability of *being* on ``s_k``. King
+  locations are **mutually exclusive** (the king is in exactly one place, weights
+  sum to 1), so conditioned on "king is on ``s_k``" every *earlier* king ghost on
+  the path is empty and drops out of the blocker product -- only non-king,
+  non-attacker pieces can block the walk. Summing the ``q(s_k)`` terms is exact
+  (mutually-exclusive events), which is what lets one slide that covers two king
+  ghosts read as a certain capture.
+* A blocking piece ``X`` with several ghosts on the path blocks with probability
+  equal to the *sum* of those ghost masses (its locations are mutually exclusive
+  too -- the sequential path-collapse renormalization works out to exactly this),
+  while *distinct* pieces really are independent, hence the product over ``X``.
+* The attacker's own other ghosts never block (the walk passes through them), so
+  ``X`` ranges over non-king, non-attacker pieces only.
 
 Solid blockers never appear as "between" ghosts: python-chess ``attacks`` over
 the solid board already refuses to generate a ray through a solid piece, so
 ``rules.ghost_destinations`` (reused here) only yields reachable targets.
+
+**Mass movement** (optional dial): when it's on, a *superposed* enemy piece may
+mass-move -- one categorical roll picks which ghost is real, and the winning
+ghost's chosen slide resolves with the mover *certain*. So its strongest king
+threat is ``SUM over its ghosts g of  p_g * (best single leg of g, assuming g is
+certainly present)`` -- a *sum* (the roll outcomes are mutually exclusive), each
+term taking that ghost's best-capturing destination. This can strictly beat any
+single move (two ghosts covering the king from opposite sides guarantee a
+capture). Included in the max only when ``mass_movement=True`` is passed.
 
 Headless like the rest of the engine -- no pygame, exact ``Fraction`` math, and
 **no RNG**: this is the *expected* danger, not a rolled outcome.
@@ -48,6 +64,7 @@ from __future__ import annotations
 import copy
 from dataclasses import dataclass
 from fractions import Fraction
+from typing import Optional
 
 import chess
 
@@ -57,20 +74,26 @@ from .rules import Move
 
 
 @dataclass(frozen=True)
-class Threat:
-    """One enemy capturing attempt against a single king ghost.
+class KingThreat:
+    """The enemy's strongest capturing move against one king, for display.
 
-    ``prob`` is the *attacker-side* success probability -- P(this attacker
-    materialises on ``king_square`` with a clear path), which does **not**
-    include the king's own presence there. That factor is carried separately as
-    ``king_prob`` so ``check_probability`` can weight it as the mutually-exclusive
-    "king is actually on this square" probability instead of folding it into an
-    independent product (see the module docstring)."""
+    ``prob`` is that move's capture probability (the reported check number).
+    ``from_square``/``to_square`` name the slide (both ``None`` for a mass-move
+    threat, which has no single origin/target)."""
+    prob: Fraction
     attacker_id: int
-    from_square: int
-    king_square: int          # the king-ghost square that would be captured
-    prob: Fraction            # P(attacker reaches king_square) -- excludes king prob
-    king_prob: Fraction       # P(the king is actually on king_square)
+    ptype: int
+    from_square: Optional[int] = None
+    to_square: Optional[int] = None
+    is_mass: bool = False
+
+    def describe(self) -> str:
+        """Short human label, e.g. ``"R a4->f4"`` or ``"R mass"``."""
+        letter = chess.piece_symbol(self.ptype).upper()
+        if self.is_mass:
+            return f"{letter} mass"
+        return (f"{letter} {chess.square_name(self.from_square)}"
+                f"->{chess.square_name(self.to_square)}")
 
 
 def king_ghosts(qb: QuantumBoard, color: bool) -> list[Ghost]:
@@ -83,60 +106,100 @@ def king_ghosts(qb: QuantumBoard, color: bool) -> list[Ghost]:
     return ghosts
 
 
-def threats_against(qb: QuantumBoard, color: bool) -> list[Threat]:
-    """All enemy (``not color``) capturing attempts against ``color``'s king.
+def _ordered_path(frm: int, to: int) -> list[int]:
+    """The squares a slide crosses, in travel order: the squares strictly
+    between ``frm`` and ``to`` (nearest first) then ``to`` itself. Empty
+    ``between`` for a knight jump collapses this to just ``[to]``."""
+    middle = sorted(chess.SquareSet(chess.between(frm, to)),
+                    key=lambda s: chess.square_distance(frm, s))
+    return middle + [to]
 
-    One threat per (attacker ghost -> reachable king-ghost square) alignment.
-    Independent of whose turn it is: it answers "if it were the enemy's move,
-    what could they do to this king right now."
-    """
-    king_sq = {g.square: g for g in king_ghosts(qb, color)}
-    if not king_sq:
-        return []
 
+def _path_capture_part(qb: QuantumBoard, frm: int, to: int,
+                       king_prob_by_sq: dict[int, Fraction],
+                       attacker_id: int) -> Fraction:
+    """Capture probability of a slide ``frm -> to`` **given the attacker is
+    certainly present** -- the ``SUM_k q(s_k) * PROD_X (1 - blocker mass)`` term.
+
+    Multiply by the attacker ghost's own ``prob`` for a single-move threat; use
+    it as-is (weighted by the categorical roll) for a mass-move leg. Walks the
+    path in travel order, accumulating each non-king / non-attacker piece's ghost
+    mass as a blocker; king ghosts are mutually exclusive so they're summed as
+    the ``q(s_k)`` terms and never counted as blockers of a *later* king ghost."""
+    if not king_prob_by_sq:
+        return Fraction(0)
+    total = Fraction(0)
+    blocker_mass: dict[int, Fraction] = {}   # piece_id -> ghost mass seen so far
+    for sq in _ordered_path(frm, to):
+        if sq in king_prob_by_sq:
+            survival = Fraction(1)
+            for mass in blocker_mass.values():
+                survival *= 1 - mass
+            total += king_prob_by_sq[sq] * survival
+            continue                      # a king ghost never blocks a later one
+        occ = qb.ghost_at(sq)
+        if occ is None or occ.piece_id == attacker_id:
+            continue                      # empty, or the attacker's own ghost (passes through)
+        blocker_mass[occ.piece_id] = blocker_mass.get(occ.piece_id, Fraction(0)) + occ.prob
+    return total
+
+
+def strongest_threat(qb: QuantumBoard, color: bool,
+                     mass_movement: bool = False) -> Optional[KingThreat]:
+    """The enemy's single most dangerous move against ``color``'s king, or
+    ``None`` if there is no king (or nothing threatens it -- ``prob == 0``).
+
+    Considers every enemy ghost's pseudo-legal moves and, when ``mass_movement``
+    is on, each superposed enemy piece's best mass move too. Independent of whose
+    turn it actually is: "if it were the enemy's move, what's the worst they
+    could do right now."""
+    kg = king_ghosts(qb, color)
+    if not kg:
+        return None
+    king_prob_by_sq = {g.square: g.prob for g in kg}
     board = rules._solids_board(qb)
-    threats: list[Threat] = []
+
+    best: Optional[KingThreat] = None
     for enemy in qb.living_pieces(not color):
-        for eg in qb.ghosts_of(enemy.id):
+        ghosts = qb.ghosts_of(enemy.id)
+
+        # Single-move threats: one ghost slides, capturing if it reaches the king.
+        for eg in ghosts:
             for move in rules.ghost_destinations(qb, eg.square, board):
-                target = king_sq.get(move.to_square)
-                if target is None:
+                part = _path_capture_part(qb, eg.square, move.to_square,
+                                          king_prob_by_sq, enemy.id)
+                if part == 0:
                     continue
-                p = eg.prob
-                for mid in chess.SquareSet(chess.between(eg.square, move.to_square)):
-                    blocker = qb.ghost_at(mid)
-                    if blocker is not None and blocker.piece_id != enemy.id:
-                        p *= 1 - blocker.prob
-                if p > 0:
-                    threats.append(
-                        Threat(enemy.id, eg.square, move.to_square, p, target.prob))
-    return threats
+                p = eg.prob * part
+                if best is None or p > best.prob:
+                    best = KingThreat(p, enemy.id, enemy.ptype,
+                                      eg.square, move.to_square, is_mass=False)
+
+        # Mass-move threat: the categorical roll picks the real ghost; each
+        # ghost independently takes its best-capturing leg (assuming it's real).
+        if mass_movement and len(ghosts) > 1:
+            total = Fraction(0)
+            for eg in ghosts:
+                best_leg = Fraction(0)
+                for move in rules.ghost_destinations(qb, eg.square, board):
+                    part = _path_capture_part(qb, eg.square, move.to_square,
+                                              king_prob_by_sq, enemy.id)
+                    if part > best_leg:
+                        best_leg = part
+                total += eg.prob * best_leg
+            if total > 0 and (best is None or total > best.prob):
+                best = KingThreat(total, enemy.id, enemy.ptype, is_mass=True)
+
+    return best
 
 
-def check_probability(qb: QuantumBoard, color: bool) -> Fraction:
-    """Aggregate danger to ``color``'s king, conditioned on the king's location.
-
-    Partition the threats by the king-ghost square they aim at (mutually
-    exclusive locations, weights ``q_s`` summing to 1), aggregate the
-    attacker-side threats *within* each square as ``1 - prod(1 - a_i)``, then
-    take the ``q_s``-weighted average::
-
-        sum_s  q_s * (1 - prod(1 - a_i) over threats on s)
-
-    ``0`` means completely safe; ``1`` means capture is certain wherever the king
-    turns out to be. Exact ``Fraction`` (e.g. ``Fraction(3, 8)``)."""
-    # king_square -> (q_s, running product of attacker survival on that square)
-    by_square: dict[int, list[Fraction]] = {}
-    for threat in threats_against(qb, color):
-        entry = by_square.get(threat.king_square)
-        if entry is None:
-            by_square[threat.king_square] = [threat.king_prob, 1 - threat.prob]
-        else:
-            entry[1] *= 1 - threat.prob
-    danger = Fraction(0)
-    for king_prob, survive in by_square.values():
-        danger += king_prob * (1 - survive)
-    return danger
+def check_probability(qb: QuantumBoard, color: bool,
+                      mass_movement: bool = False) -> Fraction:
+    """Danger to ``color``'s king = the enemy's strongest single move's capture
+    probability (see the module docstring). ``0`` means completely safe; ``1``
+    means some one move captures for certain. Exact ``Fraction``."""
+    threat = strongest_threat(qb, color, mass_movement)
+    return threat.prob if threat is not None else Fraction(0)
 
 
 def _hypothetical_after(qb: QuantumBoard, move: Move) -> QuantumBoard:
@@ -173,10 +236,11 @@ def _hypothetical_after(qb: QuantumBoard, move: Move) -> QuantumBoard:
     return hypo
 
 
-def move_self_check(qb: QuantumBoard, move: Move) -> Fraction:
-    """Aggregate danger to the *mover's own* king after ``move`` is played --
-    the warning-before-you-move number. Detects both moving into an attack
-    (the king itself, or a piece landing on an attacked square) and discovered
-    exposure (a blocker leaving a line to the king)."""
+def move_self_check(qb: QuantumBoard, move: Move,
+                    mass_movement: bool = False) -> Fraction:
+    """Danger to the *mover's own* king after ``move`` is played -- the
+    warning-before-you-move number. Detects both moving into an attack (the king
+    itself, or a piece landing on an attacked square) and discovered exposure (a
+    blocker leaving a line to the king)."""
     mover_color = qb.pieces[move.piece_id].color
-    return check_probability(_hypothetical_after(qb, move), mover_color)
+    return check_probability(_hypothetical_after(qb, move), mover_color, mass_movement)

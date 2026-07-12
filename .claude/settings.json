@@ -16,7 +16,8 @@
       "Bash(git branch *)",
       "Bash(git checkout *)",
       "Bash(SDL_VIDEODRIVER=dummy python -m pytest tests/test_check.py -q)",
-      "Bash(SDL_VIDEODRIVER=dummy python -m pytest -q)"
+      "Bash(SDL_VIDEODRIVER=dummy python -m pytest -q)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }

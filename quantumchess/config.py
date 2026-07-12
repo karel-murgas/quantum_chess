@@ -21,6 +21,7 @@ class CollapseMode(Enum):
 class GameConfig:
     collapse_mode: CollapseMode = CollapseMode.FULL
     splitting_enabled: bool = True
+    mass_movement: bool = False        # allow moving *all* of a piece's ghosts in one planned turn
     seed: Optional[int] = None
     theme: str = "origin"              # "origin" | "cyberpunk"
     white_name: str = "White"

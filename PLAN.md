@@ -39,7 +39,7 @@ Only the acted-on ghost moves/splits; a piece's other ghosts stay put. (This is 
 
 **Move-scope dial** (`options.md` lines 12–19, parallel to split-scope):
 - *Single-ghost move* (v1 default): only the acted ghost moves.
-- *All-ghosts move*: every ghost of the piece moves at once, either **dependently/symmetrically** (mirrored by the middle line or middle point — `options.md` lines 17–19) or **independently** (each ghost takes its own legal move). Deferred; flagged in code.
+- *All-ghosts move*: every ghost of the piece moves at once, either **dependently/symmetrically** (mirrored by the middle line or middle point — `options.md` lines 17–19) or **independently** (each ghost takes its own legal move). The **independent** variant shipped 2026-07-11 as the optional `mass_movement` dial: the player plans a destination per ghost (any may hold), and a **single measurement** settles all conflicts at once — if the roll lands the piece on a conflict-free square the conflicting ghosts just vanish (per the collapse-mode dial: Partial keeps the rest superposed, Full collapses to that square), and if it lands on a conflicting square the piece goes solid there and that contact resolves normally. See `collapse.resolve_mass_move` / CLAUDE.md. The symmetric variant is still deferred.
 
 ### Probability bookkeeping
 - A live piece's ghosts always sum to **1** (it's definitely *somewhere* among them).

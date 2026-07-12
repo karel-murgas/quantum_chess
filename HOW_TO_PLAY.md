@@ -25,6 +25,10 @@ You'll see a setup menu first:
     still add up to 1.
 - **Splitting: On/Off.** Turns the whole superposition mechanic on or off. Off
   gives you ordinary chess.
+- **Mass moves: On/Off.** When on, a piece that's already in superposition can
+  move *all* of its ghosts at once in a single planned turn (see
+  [Mass moves](#mass-moves-moving-a-whole-superposition-at-once) below), instead
+  of only moving/splitting one ghost. Off by default.
 - **Seed.** Controls the random number generator behind every collapse. Click
   "Reroll seed" for a different one; write down a seed if you want to replay
   the exact same sequence of dice rolls later.
@@ -75,6 +79,39 @@ probability. Click your first pick again to cancel it and choose differently.
 One of your two picks can be the piece's own square, so one ghost stays put
 while the other moves. (This button is disabled if splitting was turned off
 in the menu.)
+
+### Mass moves: moving a whole superposition at once
+
+*(Only available if you turned **Mass moves** on in the menu.)*
+
+When you select a piece that's **already in superposition** (has more than one
+ghost), you enter **planning mode** instead of a normal single-ghost move:
+
+1. Every ghost starts out "holding" its square (a small dot marks it).
+2. Click a ghost to pick it, then click where you want *that* ghost to go — an
+   arrow shows the plan. Click the ghost again to make it hold instead.
+3. Repeat for as many ghosts as you like (leave any of them holding). If you
+   aim a **pawn** at the back rank, the promotion picker pops up so you choose
+   what that ghost would become (just like a normal promotion).
+4. Click **Confirm (Enter)** to play it, or **Cancel (Esc)** to back out.
+
+Then the game settles the whole thing with **one** dice roll. If none of your
+ghosts' destinations run into another piece, they all just relocate — no
+randomness. If some *do* (an enemy in the way, a risky contact), the roll
+decides where your piece really was:
+
+- If it turns out to have been on a **safe** destination, the ghosts that were
+  heading into trouble simply vanish (the ones threatened enemies aren't even
+  measured) — in **Partial** mode the rest of your piece stays spread out; in
+  **Full** mode it collapses solid onto that one square.
+- If it turns out to have been on a **conflict** destination, your piece
+  becomes solid there and that contact resolves like a normal collapse (capture
+  and all), while its other ghosts vanish.
+
+The point: one measurement can clear up *every* potential collision your piece
+faced this turn, instead of forcing you to collapse it one contact at a time.
+(A single ghost moving while the rest hold is just an ordinary move — mass moves
+are a superset.)
 
 ### Collapses
 
@@ -148,6 +185,7 @@ new save overwrites the last one.
 | Move | Click a legal (dot-highlighted) destination |
 | Toggle Move/Split mode | Click the mode button, or press `M` |
 | Split | In Split mode, click two destinations |
+| Mass move (if enabled) | Select a superposed piece → aim each ghost → Confirm (or `Enter`) |
 | Skip a collapse animation | Click anywhere |
 | Surrender | Click "Surrender" twice (arm, then confirm) |
 | New game after a win | Click "New Game", or press `N` |

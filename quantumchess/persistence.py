@@ -58,6 +58,7 @@ def to_dict(qb: QuantumBoard, config: GameConfig, rng: random.Random,
         "config": {
             "collapse_mode": config.collapse_mode.value,
             "splitting_enabled": config.splitting_enabled,
+            "mass_movement": config.mass_movement,
             "seed": config.seed,
             "theme": config.theme,
             "white_name": config.white_name,
@@ -98,6 +99,7 @@ def from_dict(data: dict[str, Any]) -> tuple[QuantumBoard, GameConfig, random.Ra
     config = GameConfig(
         collapse_mode=CollapseMode(cfg_data["collapse_mode"]),
         splitting_enabled=cfg_data["splitting_enabled"],
+        mass_movement=cfg_data.get("mass_movement", default_config.mass_movement),
         seed=cfg_data["seed"],
         theme=cfg_data.get("theme", default_config.theme),
         white_name=cfg_data.get("white_name", default_config.white_name),

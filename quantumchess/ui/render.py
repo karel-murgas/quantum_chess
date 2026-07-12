@@ -295,6 +295,64 @@ def draw_beat(surface, beat: Beat, t: float, fonts):
         _draw_caption(surface, fonts["label"], beat.caption, beat.caption_square, t)
 
 
+# ------------------------------------------------------ mass-move planning
+def mass_controls_rects():
+    """The two floating Confirm / Cancel buttons shown over the board while a
+    mass move is being planned. Overlaid on the board (like the promotion
+    picker) so a mouse-only player never needs the keyboard; hit-tested before
+    board squares in ``App.handle_mouse_down``."""
+    bw, bh, gap = 156, 40, 16
+    total = bw * 2 + gap
+    cx = theme.BOARD_MARGIN + (theme.BOARD_PIXELS - total) // 2
+    cy = theme.BOARD_MARGIN + theme.BOARD_PIXELS - bh - 12
+    return {
+        "confirm": pygame.Rect(cx, cy, bw, bh),
+        "cancel": pygame.Rect(cx + bw + gap, cy, bw, bh),
+    }
+
+
+def _draw_arrow(surface, a, b, color, width=4):
+    """A directed line a -> b with a little arrowhead at b."""
+    pygame.draw.line(surface, color, a, b, width)
+    ang = math.atan2(b[1] - a[1], b[0] - a[0])
+    size = 14
+    for da in (math.radians(150), math.radians(-150)):
+        tip = (b[0] + size * math.cos(ang + da), b[1] + size * math.sin(ang + da))
+        pygame.draw.line(surface, color, b, tip, width)
+
+
+def draw_plan_rings(surface, plan, plan_active, plan_piece):
+    """Aura ring around every ghost of the piece being planned, plus a bright
+    'active' ring on the ghost currently being assigned. Drawn *under* the
+    pieces (like the normal selection highlight)."""
+    color = _aura_color(plan_piece)
+    for frm in plan:
+        pygame.draw.rect(surface, color, square_rect(frm), width=4)
+    if plan_active is not None:
+        pygame.draw.rect(surface, theme.SELECTED_RING, square_rect(plan_active), width=5)
+
+
+def draw_plan_arrows(surface, plan, plan_piece):
+    """One arrow per reassigned ghost (source -> chosen destination) with a ring
+    on the destination; a small 'hold' dot marks a ghost left in place. Drawn
+    *over* the pieces so the plan stays legible."""
+    color = _aura_color(plan_piece)
+    for frm, to in plan.items():
+        if frm == to:
+            pygame.draw.circle(surface, color, square_rect(frm).center,
+                               theme.SQUARE // 10, width=3)
+            continue
+        a, b = square_rect(frm).center, square_rect(to).center
+        _draw_arrow(surface, a, b, color)
+        pygame.draw.circle(surface, color, b, theme.SQUARE // 6, width=3)
+
+
+def draw_mass_controls(surface, fonts):
+    rects = mass_controls_rects()
+    _draw_button(surface, rects["confirm"], "Confirm (Enter)", fonts["small"], active=True)
+    _draw_button(surface, rects["cancel"], "Cancel (Esc)", fonts["small"], active=False)
+
+
 def panel_rects():
     """Clickable button rects in the side panel, shared by draw and hit-testing."""
     panel_x = theme.BOARD_MARGIN * 2 + theme.BOARD_PIXELS
