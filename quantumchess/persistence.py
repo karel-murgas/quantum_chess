@@ -61,6 +61,8 @@ def to_dict(qb: QuantumBoard, config: GameConfig, rng: random.Random,
             "mass_movement": config.mass_movement,
             "seed": config.seed,
             "theme": config.theme,
+            "white_piece_set": config.white_piece_set,
+            "black_piece_set": config.black_piece_set,
             "white_name": config.white_name,
             "black_name": config.black_name,
             "white_color": list(config.white_color),
@@ -102,6 +104,12 @@ def from_dict(data: dict[str, Any]) -> tuple[QuantumBoard, GameConfig, random.Ra
         mass_movement=cfg_data.get("mass_movement", default_config.mass_movement),
         seed=cfg_data["seed"],
         theme=cfg_data.get("theme", default_config.theme),
+        # Migrate the old single "piece_set" key: use it for both sides if the
+        # per-team keys are absent (a save from before per-team sets existed).
+        white_piece_set=cfg_data.get("white_piece_set",
+                                     cfg_data.get("piece_set", default_config.white_piece_set)),
+        black_piece_set=cfg_data.get("black_piece_set",
+                                     cfg_data.get("piece_set", default_config.black_piece_set)),
         white_name=cfg_data.get("white_name", default_config.white_name),
         black_name=cfg_data.get("black_name", default_config.black_name),
         white_color=tuple(cfg_data.get("white_color", default_config.white_color)),
@@ -141,10 +149,13 @@ TEAMS_FORMAT_VERSION = 1
 
 
 def save_teams(path, *, theme: str, white_name: str, black_name: str,
-               white_color, black_color) -> None:
+               white_color, black_color,
+               white_piece_set: str = "cburnett", black_piece_set: str = "cburnett") -> None:
     data = {
         "version": TEAMS_FORMAT_VERSION,
         "theme": theme,
+        "white_piece_set": white_piece_set,
+        "black_piece_set": black_piece_set,
         "white_name": white_name,
         "black_name": black_name,
         "white_color": list(white_color),
@@ -156,17 +167,24 @@ def save_teams(path, *, theme: str, white_name: str, black_name: str,
 
 
 def load_teams(path) -> dict[str, Any]:
-    """Return {theme, white_name, black_name, white_color, black_color}.
+    """Return {theme, white_piece_set, black_piece_set, white_name, black_name,
+    white_color, black_color}.
 
     Colours come back as plain (r, g, b) tuples. Raises ``ValueError`` on an
-    unrecognized format version, like ``load_game``.
+    unrecognized format version, like ``load_game``. The per-team piece sets
+    fall back to the old single "piece_set" key (or "cburnett") for team files
+    written before per-team sets existed -- a grow-only schema change, so no
+    version bump, same precedent as the theme fields.
     """
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     version = data.get("version")
     if version != TEAMS_FORMAT_VERSION:
         raise ValueError(f"unsupported teams format version: {version!r}")
+    old_set = data.get("piece_set", "cburnett")
     return {
         "theme": data["theme"],
+        "white_piece_set": data.get("white_piece_set", old_set),
+        "black_piece_set": data.get("black_piece_set", old_set),
         "white_name": data["white_name"],
         "black_name": data["black_name"],
         "white_color": tuple(data["white_color"]),

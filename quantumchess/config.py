@@ -24,6 +24,9 @@ class GameConfig:
     mass_movement: bool = False        # allow moving *all* of a piece's ghosts in one planned turn
     seed: Optional[int] = None
     theme: str = "origin"              # "origin" | "cyberpunk"
+    # Board art, chosen per team ("cburnett"|"merida"|"neon"|"unicode").
+    white_piece_set: str = "cburnett"
+    black_piece_set: str = "cburnett"
     white_name: str = "White"
     black_name: str = "Black"
     white_color: tuple[int, int, int] = (240, 200, 90)
@@ -35,3 +38,6 @@ class GameConfig:
 
     def team_color(self, color: bool) -> tuple[int, int, int]:
         return self.white_color if color else self.black_color
+
+    def piece_set(self, color: bool) -> str:
+        return self.white_piece_set if color else self.black_piece_set

@@ -10,7 +10,12 @@ really was.
 
 ## Stack
 - Python 3.13, **`python-chess`** (movement oracle only), **`pygame-ce`** (UI), `pytest`.
-- Pieces drawn as **Unicode glyphs** (no image assets); alpha = probability.
+- Pieces are drawn from a **selectable piece set** (added 2026-07-12, see
+  `ui/pieces.py` below): real vector art (`cburnett`/`merida`, SVGs rasterized
+  via pygame-ce's native `load_sized_svg` — no external dep), a runtime-generated
+  `neon` silhouette set, or the original `unicode` glyphs. Alpha still tracks
+  probability. The whole UI is **supersampled** (`theme.SCALE`, drawn at 2x and
+  smooth-scaled to the window via `ui/present.py`) so it's crisp, not pixelated.
 - Install: `pip install -r requirements.txt`.
 
 ## Locked v1 design decisions (don't silently change these)
@@ -332,6 +337,85 @@ really was.
   per the user's ask for a save/load-teams button.
 - `ui/` — pygame layer (Milestone 4). **The only place that imports pygame** —
   never import it from the engine modules above.
+  - **Graphics overhaul (added 2026-07-12)** — user asked to make the game less
+    pixelated / prettier and to add selectable piece sets. Three pillars:
+    - `pieces.py` — the **piece-set registry/renderer**, the single place that
+      turns a `(ptype, color)` into board art. Sets: `cburnett`/`merida` (real
+      Lichess SVGs bundled under `ui/assets/pieces/<set>/{wP..bK}.svg`,
+      rasterized at the exact pixel size via `pygame.image.load_sized_svg` — no
+      Cairo/`cairosvg` dep, and crisp at any size), `neon` (generated at runtime:
+      each cburnett silhouette recoloured to the side's `theme.WHITE_NEON`/
+      `BLACK_NEON` via a numpy-free `_recolor` — BLEND_RGBA_MAX floods rgb to
+      white keeping each pixel's alpha, then BLEND_RGBA_MULT stamps that alpha
+      onto a flat colour fill — plus a glow), and `unicode` (the original glyph
+      look, drawn by the font path). `render_token` composites a soft drop
+      shadow (classic sets) or coloured glow (neon) via `gaussian_blur`, cached.
+      Two caches: raw SVG rasters keyed `(set, code, size)` (theme-independent,
+      never invalidated) and composited tokens keyed by a revision counter that
+      `set_active` bumps (so a mid-match theme/colour/set change repaints without
+      stale neon colours while the expensive raster survives). Adding a future
+      thematic set = drop its SVGs in a folder + one `(key, label)` line in
+      `PIECE_SETS`. Called via `render.draw_token`'s art branch (extracted as
+      `render.blit_piece_art`, reused by the HUD/Clarity skins' own `draw_token`,
+      which draw the art for every set except `unicode` — the art itself carries
+      the side, so no token circle). The promotion picker and removed-pieces tray
+      also render the active set's art. The active set is **per side** (each team
+      picks its own figures, added 2026-07-12) — `_active` is a
+      `{colour -> set}` map, `pieces.active(color)` reads it, and
+      `pieces.set_active(white, black)` sets it (called next to every
+      `theme.apply_theme(...)` — main.py, `App.load_from`/`_handle_settings_click`
+      — as `set_active(config.white_piece_set, config.black_piece_set)`). Every
+      renderer that branches on the set (`render.draw_token`/`blit_piece_art`/
+      `draw_promotion_picker`, the skins' `draw_token`) passes the piece's
+      `color`, so White can be `cburnett` while Black is `neon` on the same board.
+    - **`theme.SCALE` supersampling** — the whole game frame is drawn at
+      `SCALE`× (=2) the base layout resolution onto an offscreen surface, then
+      smooth-scaled to fit the window (see `present.py`) — downscaling a 2x
+      render = free SSAA, and an upscale to a big monitor stays smooth instead
+      of the old `pygame.SCALED` nearest-neighbour blockiness. **All game
+      geometry constants in `theme.py` are `× SCALE`**; because `SCALE` is a
+      *static* constant (fixed at import), the module-level copies the skins
+      capture at import time (`base.py`'s `SQUARE`/`WINDOW_W`/...) already see the
+      scaled values — no runtime plumbing. Skin **font sizes** and every stray
+      pixel-literal (panel Y-flows, stroke widths, chip padding, radii) are
+      wrapped in `theme.px(n)` = `round(n*SCALE)` so they scale with the frame —
+      this was a large but mechanical pass across `render.py`/`base.py`/`hud.py`/
+      `clarity.py` (the skins' panels are authored in absolute pixels like the
+      menu, so they'd otherwise cram into the top fifth with 2x fonts
+      overflowing). `theme.MENU_W`/`MENU_H` are the base (unscaled) window size:
+      the pre-game / Settings menu is authored at that resolution on its own
+      surface and smooth-scaled the same way (so `menu.py`'s many absolute
+      literals stayed untouched). `theme.THEME_NAME` (set by `apply_theme`) lets
+      `App.draw` overlay a cached `render.draw_vignette` on the cyberpunk theme.
+    - `present.py` — physical-window presentation. Everything draws onto offscreen
+      *logical* surfaces (the game at `WINDOW_W×WINDOW_H`, the menu at
+      `MENU_W×MENU_H`); `present(window, source)` smooth-scales the source to fit
+      the OS window letterboxed, and `to_logical(pos)` maps a physical click back
+      onto whichever surface was last presented. The window is **resizable /
+      fullscreen-toggleable** (F11); `main.py` and `App.run` translate every
+      `MOUSEBUTTONDOWN` through `to_logical` before dispatch and recreate the
+      window on `VIDEORESIZE`. This replaced the fixed-size `set_mode(..., SCALED)`
+      window. **F11 goes through `present.toggle_fullscreen(window)`** (explicit
+      `set_mode((0,0), FULLSCREEN)` / restore the windowed size), not
+      `pygame.display.toggle_fullscreen()` — the latter misbehaved with a manually
+      presented window; `VIDEORESIZE` is ignored while `present.is_fullscreen()`.
+      **Any live mouse read must translate too**: `BaseSkin.hover_square` maps
+      `pygame.mouse.get_pos()` through `to_logical` before `square_at_pixel`,
+      otherwise the hover highlight lands on the wrong square (a bug from the
+      first cut of this layer). Tests are unaffected: they drive
+      `handle_mouse_down` directly in scaled logical space (clicking
+      `render.square_rect(...).center`), never touching the physical translation.
+    - `config.GameConfig.white_piece_set`/`black_piece_set` (both default
+      `"cburnett"`, with a `piece_set(color)` accessor) carry the per-team choice;
+      round-tripped by `persistence.py` (game saves *and* the cosmetic
+      `save_teams`/`load_teams`). Backward-compat: a save/team file written with
+      the **old single `piece_set` key** loads it for *both* sides
+      (`.get("white_piece_set", .get("piece_set", "cburnett"))`); absent
+      entirely it falls back to cburnett — no version bump, same precedent as the
+      theme fields. The menu (`menu.py`) has **two piece-set rows** (one per team,
+      each a team-name label + one button per set with a king preview drawn in
+      that team's colour), and the "⇄" swap trades the two sides' sets along with
+      their names/colours.
   - `theme.py` — layout/color constants, the glyph map (`♔♕♖♗♘♙`, tinted per
     side rather than relying on separate black/white codepoints — see font note
     below). Two swappable presets, **origin** (the original wood-board look)
@@ -398,7 +482,17 @@ really was.
   - `render.py` — pure drawing functions (board, ghost tokens with alpha ∝
     probability + fraction label, same-piece aura outlines, legal-destination
     dots colour-coded safe/merge/**risky-contact**, side panel, promotion
-    picker). Nothing here mutates state. `draw_token` is the shared token
+    picker). Nothing here mutates state. (**Cleanup 2026-07-12**: the pre-skin
+    single-render-path functions `draw_board`/`draw_highlights`/`draw_pieces`/
+    `_draw_anim_token`/`draw_beat`/`draw_side_panel` — plus the dead `theme.THEMES`
+    constant, `animation.total_duration`, and `BaseSkin._round_card` — were
+    **removed as dead code**: every skin now owns its board/piece/panel drawing
+    via `base.py` + `hud.py`/`clarity.py`, calling the smaller `render.*`
+    primitives directly. References to those removed functions in the paragraphs
+    below are historical; the primitives they described —
+    `draw_log_line`/`_log_keyword_spans`/`_draw_danger_marker`/`frac_str`/
+    `draw_token`/`draw_flash`/`shatter`/`caption` etc. — are still live and
+    called by the skins.) `draw_token` is the shared token
     renderer (used by both the live board and the animation); `draw_beat(surface,
     beat, t, fonts)` draws one animation beat at progress `t` — rest tokens,
     sliding travel tokens (smoothstep-eased), fading `removed` ghosts, a capture
@@ -551,7 +645,7 @@ really was.
     the demo script was deleted — the redesigned UI *is* the main game now;
     `python main.py` runs it directly. `base.py`'s `BaseSkin` still supplies
     the shared contract (hit-testing/geometry, fonts, `_check_values`
-    cache, `_hbar`/`_caps_label`/`_round_card` helpers) both skins build on;
+    cache, `_hbar`/`_caps_label` helpers) both skins build on;
     each skin owns its own `panel_rects()` (so drawn and clickable
     positions stay in lock-step — `App.handle_mouse_down` always hit-tests
     against `self.skin.panel_rects()`) and a from-scratch `draw_panel`.
@@ -642,7 +736,7 @@ really was.
 - Demo (M1 random game): `python demo_m1.py [seed]`
 - Demo (M2 superposition): `python demo_m2.py`
 - Demo (M3 collapse): `python demo_m3.py [seed]` — try seeds 1-5, each gives a different outcome
-- Tests: `python -m pytest -q`  (164 passing). UI tests need `SDL_VIDEODRIVER=dummy` in
+- Tests: `python -m pytest -q`  (173 passing). UI tests need `SDL_VIDEODRIVER=dummy` in
   the environment (set automatically at the top of `test_m4_ui.py`, but harmless to
   also export it yourself: `SDL_VIDEODRIVER=dummy python -m pytest -q`).
 - `HOW_TO_PLAY.md` (repo root) — player-facing rules/controls guide for the user and their friend.
@@ -902,9 +996,49 @@ really was.
       `mass_movement` flag (UI passes `config.mass_movement`). 164 tests passing
       (`tests/test_check.py` rewrote the two multi-threat cases and added the
       one-slide-sweep, two-lines-take-max, and mass-move-beats-single tests).
+      Later **2026-07-12**, a **graphics overhaul** landed (user: "how to make
+      the game more pretty ... can you do better resolution? it is quite
+      pixelated") — five improvements, see the `ui/pieces.py`/`theme.SCALE`/
+      `ui/present.py` writeup under Architecture above: (1) **supersampling** —
+      the whole frame is drawn at 2x and smooth-scaled to a resizable/fullscreen
+      window (`ui/present.py`), replacing the nearest-neighbour `SCALED` upscale;
+      (2) **selectable piece sets** — real vector art (`cburnett`/`merida` SVGs
+      via `load_sized_svg`), a runtime neon silhouette set, and the original
+      `unicode`, chosen by a new `config.piece_set` dial + menu picker
+      (`ui/pieces.py`); (3) **anti-aliased/higher-res** shapes and text (SSAA +
+      scaled strokes); (4) crisper text (scaled fonts); (5) **effects** — soft
+      drop shadows on classic pieces, a neon glow on the neon set, and a
+      cyberpunk vignette (`gaussian_blur`). Scaling the skins' absolute-pixel
+      panels via `theme.px()` was the bulk of the work; the piece-set dial is
+      persisted in both game saves and `save_teams`. A follow-up pass the same
+      day made piece sets **per-team** (each side picks its own figures — two
+      menu rows, `pieces.active(color)`/`set_active(white, black)`,
+      `config.white_piece_set`/`black_piece_set`), and fixed two present-layer
+      bugs from the first cut: the **hover highlight** now translates the mouse
+      through `present.to_logical` (it was hit-testing physical pixels against the
+      2x logical board), and **F11 fullscreen** goes through
+      `present.toggle_fullscreen` (explicit `set_mode`) instead of the flaky
+      `pygame.display.toggle_fullscreen()`. 173 tests passing
+      (`tests/test_pieces.py` covers the registry/renderer — set listing,
+      unknown-set fallback, SVG rasterization, neon recolour to the side colour,
+      shadow/glow padding, and revision-keyed caching; `test_persistence.py`
+      gained `piece_set` round-trip + old-file-fallback coverage).
 - [ ] **M5** — (menu dials already landed in M4; this milestone folds into it —
       remaining polish items only, e.g. richer dial explanations in-menu).
 - [ ] **M6** — polish pass (see below for what's left).
+
+## Future direction — online play (design only, not built)
+Speced in `ONLINE_PLAY.md` (discussed 2026-07-12; nothing implemented). Cheap
+here because there's **no hidden info** (both clients see the whole board), **no
+timer** (one message/turn), and the **only nondeterminism is the collapse roll**
+— resolved by the active side locally and shipped as an *outcome* (action +
+`CollapseEvent`s + a `persistence.to_dict` snapshot), so the receiver replays the
+same `build_animation` and hard-sets state; RNG never needs syncing (only the
+active side ever draws). Plan: a transport-agnostic `NetSession` seam +
+`to_dict`/`from_dict` for `Move`/`Split`/`MassMove`/`CollapseEvent`, turn-gated
+on `qb.turn`, then a direct TCP socket (Tailscale for internet); a hosted
+WebSocket relay drops in behind the same interface later. Engine stays
+networking-free (same rule as pygame).
 
 ## Known deferred edge cases
 - En passant against a **superposed** victim pawn is not offered as a move (only

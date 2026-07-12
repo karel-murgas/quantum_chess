@@ -20,7 +20,7 @@ from ..config import GameConfig
 from ..model import QuantumBoard
 from ..persistence import load_game, save_game
 from ..rules import MassMove, MoveKind, Split
-from . import render, theme
+from . import render, theme, present, pieces
 from .animation import Token, build_animation
 from .menu import Menu
 from .skins import build_skins
@@ -29,8 +29,14 @@ DEFAULT_SAVE_PATH = Path("saves/quicksave.json")
 
 
 class App:
-    def __init__(self, screen: pygame.Surface, config: GameConfig):
-        self.screen = screen
+    def __init__(self, window: pygame.Surface, config: GameConfig):
+        # `window` is the physical OS surface; the game is drawn onto an
+        # offscreen supersampled surface (`self.screen`) and smooth-scaled to
+        # fit the window each frame (see ui/present.py). The in-game Settings
+        # menu draws onto its own base-resolution surface, made in open_settings.
+        self.window = window
+        self.screen = pygame.Surface((theme.WINDOW_W, theme.WINDOW_H))
+        self._menu_surf = None
         self.config = config
         self.rng = random.Random(config.seed)
         self.qb = QuantumBoard.standard_setup()
@@ -362,6 +368,7 @@ class App:
         self.mode = mode
         self.log = log
         theme.apply_theme(config.theme, config.white_color, config.black_color)
+        pieces.set_active(config.white_piece_set, config.black_piece_set)
         self.selected = None
         self.split_pick_a = None
         self.cancel_plan()
@@ -382,7 +389,10 @@ class App:
         collapse reveal can't be interrupted."""
         if self.is_animating():
             return
-        self.settings_menu = Menu(self.screen, in_game=True, initial_config=self.config)
+        # The settings menu is authored at the base resolution, like the
+        # pre-game menu -- give it its own surface (present() scales it up).
+        self._menu_surf = pygame.Surface((theme.MENU_W, theme.MENU_H))
+        self.settings_menu = Menu(self._menu_surf, in_game=True, initial_config=self.config)
         self.in_settings = True
 
     def _handle_settings_click(self, pos):
@@ -395,6 +405,7 @@ class App:
             return
         action, config = result
         theme.apply_theme(config.theme, config.white_color, config.black_color)
+        pieces.set_active(config.white_piece_set, config.black_piece_set)
         if action == "resume":
             self.config = config
             self.log.append("Settings updated.")
@@ -404,6 +415,7 @@ class App:
                             f"({config.team_name(chess.WHITE)} vs {config.team_name(chess.BLACK)}).")
         self.in_settings = False
         self.settings_menu = None
+        self._menu_surf = None
 
     def handle_mouse_down(self, pos):
         # Each skin lays its panel out differently; hit-test against the
@@ -771,10 +783,15 @@ class App:
         # while it's open.
         if self.in_settings:
             self.settings_menu.draw()
+            present.present(self.window, self._menu_surf)
             return
         # The active skin owns the entire frame -- board, pieces, panel,
-        # collapse animation. See ui/skins/.
+        # collapse animation. See ui/skins/. It draws onto the offscreen
+        # supersampled surface, which is then smooth-scaled to the window.
         self.skin.draw(self)
+        if getattr(theme, "THEME_NAME", "origin") == "cyberpunk":
+            render.draw_vignette(self.screen)   # moodier, screen-lit look
+        present.present(self.window, self.screen)
 
     # ----------------------------------------------------------------- run
     def handle_keydown(self, event):
@@ -787,12 +804,12 @@ class App:
                 self.in_settings = False
                 self.settings_menu = None
             elif event.key == pygame.K_F11:
-                pygame.display.toggle_fullscreen()
+                self.window = present.toggle_fullscreen(self.window)
             else:
                 self.settings_menu.handle_keydown(event)
             return
         if event.key == pygame.K_F11:
-            pygame.display.toggle_fullscreen()
+            self.window = present.toggle_fullscreen(self.window)
         if event.key == pygame.K_TAB:
             self.cycle_skin()
         if event.key == pygame.K_ESCAPE:
@@ -822,13 +839,18 @@ class App:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     return
+                elif event.type == pygame.VIDEORESIZE and not present.is_fullscreen():
+                    self.window = pygame.display.set_mode(event.size, pygame.RESIZABLE)
                 elif event.type == pygame.KEYDOWN:
                     self.handle_keydown(event)
                 elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    # Map the physical-window click onto the logical surface
+                    # that was last presented (game or settings menu).
+                    pos = present.to_logical(event.pos)
                     if self.in_settings:
-                        self._handle_settings_click(event.pos)
+                        self._handle_settings_click(pos)
                     else:
-                        self.handle_mouse_down(event.pos)
+                        self.handle_mouse_down(pos)
 
             if self.should_quit:
                 return

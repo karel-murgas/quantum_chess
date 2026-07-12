@@ -122,6 +122,18 @@ assets/         # (none needed — Unicode glyphs)
 5. ~~Match-setup menu~~ — folded into M4 (`ui/menu.py` already covers the v1 dials). Remaining: richer in-menu explanations if needed.
 6. ✅ Polish pass (2026-07-11): user's first interactive playtest passed ("looks like it works"), followed by a self-review that found and fixed three real UX bugs — Escape quit the whole app instead of cancelling a selection, no way to start a new game after a win, and the Move/Split toggle was keyboard-only. Also fixed: a winning move's own collapse animation could be skipped past via New Game. Wrote `HOW_TO_PLAY.md`. 58 tests passing. v1 is playable end to end.
 
+## Future direction — online play (design only, not built)
+Two-player online play (one match, one friend — no accounts/matchmaking) is
+speced in **[ONLINE_PLAY.md](ONLINE_PLAY.md)** (discussed 2026-07-12, nothing
+implemented yet). It's unusually cheap here because the game has **no hidden
+information** (both clients already see everything), **no timer** (one message
+per turn), and its **only nondeterminism is the collapse roll** — which the
+active side resolves locally and ships as an *outcome*, so RNG never needs
+syncing. Recommended path: a transport-agnostic `NetSession` seam + serialize
+`Move`/`Split`/`MassMove`/`CollapseEvent`, then a direct TCP socket (Tailscale
+for internet); a hosted WebSocket relay can drop in behind the same interface
+later. The engine stays networking-free, same discipline as the pygame rule.
+
 ## Testing approach
 - Engine is headless → pure `pytest`: legal-move parity with standard chess, probabilities always sum to 1, merge math, and **statistical** collapse tests (a ½ ghost captures ≈50% over N seeded trials — see `test_statistical_capture_rate_near_probability`, 3000 trials).
 - Deterministic collapse-mechanism tests use a small `ScriptedRng` test double (fixed `.random()`/`.choices()` sequence) rather than reverse-engineering real seeds — robust across Python versions and not flaky.

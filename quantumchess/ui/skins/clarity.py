@@ -17,7 +17,7 @@ import math
 import chess
 import pygame
 
-from .. import render, theme
+from .. import render, theme, pieces
 from .base import (BaseSkin, PANEL_X, PANEL_W, WINDOW_H, SQUARE)
 
 
@@ -45,12 +45,17 @@ class ClaritySkin(BaseSkin):
             col = self._aura_color(pid)
             for i in range(len(centers)):
                 for j in range(i + 1, len(centers)):
-                    pygame.draw.line(surf, self._tint(col, 55), centers[i], centers[j], 2)
+                    pygame.draw.line(surf, self._tint(col, 55), centers[i], centers[j], theme.px(2))
             for c in centers:
-                pygame.draw.circle(surf, col, c, int(SQUARE * 0.44), width=2)
+                pygame.draw.circle(surf, col, c, int(SQUARE * 0.44), width=theme.px(2))
 
     def draw_token(self, surf, color, ptype, center, *, alpha=255, radius=None, solid=True):
         r = radius if radius is not None else int(SQUARE * 0.34)
+        # Non-unicode sets show real piece art (SVG / neon silhouette) instead
+        # of Clarity's flat glyph-in-a-disc; the art itself carries the side.
+        if pieces.active(color) != "unicode":
+            render.blit_piece_art(surf, color, ptype, center, int(SQUARE * 0.36), alpha)
+            return
         fill, border, ink = self._token_colors(color)
         tok = pygame.Surface((r * 2, r * 2), pygame.SRCALPHA)
         pygame.draw.circle(tok, (*fill, alpha), (r, r), r)
@@ -83,12 +88,12 @@ class ClaritySkin(BaseSkin):
         for sq, kind in legal.items():
             c = render.square_rect(sq).center
             if kind == "merge":
-                pygame.draw.circle(surf, theme.LEGAL_MERGE_DOT, c, r, width=3)
-                pygame.draw.circle(surf, theme.LEGAL_MERGE_DOT, c, r - 7, width=2)
+                pygame.draw.circle(surf, theme.LEGAL_MERGE_DOT, c, r, width=theme.px(3))
+                pygame.draw.circle(surf, theme.LEGAL_MERGE_DOT, c, r - theme.px(7), width=theme.px(2))
             elif kind == "contact":
                 self._dotted_ring(surf, c, r, theme.LEGAL_CONTACT_DOT)
             else:
-                pygame.draw.circle(surf, theme.LEGAL_MOVE_DOT, c, r, width=4)
+                pygame.draw.circle(surf, theme.LEGAL_MOVE_DOT, c, r, width=theme.px(4))
         if warnings:
             for sq, prob in warnings.items():
                 render._draw_danger_marker(surf, sq, prob, self.fonts)
@@ -98,10 +103,10 @@ class ClaritySkin(BaseSkin):
         if sel is not None:
             p = self.pulse()
             pygame.draw.rect(surf, self._mix(theme.SELECTED_RING, (255, 255, 255), 0.3 * p),
-                             render.square_rect(sel), width=5)
+                             render.square_rect(sel), width=theme.px(5))
         if app.split_pick_a is not None:
             pygame.draw.rect(surf, theme.SPLIT_PICK_RING,
-                             render.square_rect(app.split_pick_a), width=5)
+                             render.square_rect(app.split_pick_a), width=theme.px(5))
 
     # ------------------------------------------------------------- data panel
     #: fixed geometry shared between ``panel_rects`` (hit-testing) and
@@ -109,24 +114,25 @@ class ClaritySkin(BaseSkin):
     #: than deriving one from the other, since ``panel_rects`` must stay a
     #: pure function of nothing (``App.handle_mouse_down`` calls it without a
     #: board to draw against).
-    _HERO_Y, _HERO_H = 14, 68
+    _HERO_Y, _HERO_H = theme.px(14), theme.px(68)
 
     def panel_rects(self):
-        x = PANEL_X + 18
-        right = PANEL_X + PANEL_W - 18
+        p = theme.px
+        x = PANEL_X + p(18)
+        right = PANEL_X + PANEL_W - p(18)
         w = right - x
-        half = (w - 10) // 2
+        half = (w - p(10)) // 2
         return {
-            "mode": pygame.Rect(x, 108, w, 36),
-            "save": pygame.Rect(x, 150, half, 30),
-            "load": pygame.Rect(x + half + 10, 150, half, 30),
-            "surrender": pygame.Rect(x, 186, w, 30),
-            "captured": pygame.Rect(x, 222, half, 30),
-            "check": pygame.Rect(x + half + 10, 222, half, 30),
-            "view": pygame.Rect(x, 258, half, 30),
-            "quit": pygame.Rect(x + half + 10, 258, half, 30),
-            "settings": pygame.Rect(x, 294, w, 30),
-            "new_game": pygame.Rect(x, WINDOW_H - 92, w, 44),
+            "mode": pygame.Rect(x, p(108), w, p(36)),
+            "save": pygame.Rect(x, p(150), half, p(30)),
+            "load": pygame.Rect(x + half + p(10), p(150), half, p(30)),
+            "surrender": pygame.Rect(x, p(186), w, p(30)),
+            "captured": pygame.Rect(x, p(222), half, p(30)),
+            "check": pygame.Rect(x + half + p(10), p(222), half, p(30)),
+            "view": pygame.Rect(x, p(258), half, p(30)),
+            "quit": pygame.Rect(x + half + p(10), p(258), half, p(30)),
+            "settings": pygame.Rect(x, p(294), w, p(30)),
+            "new_game": pygame.Rect(x, WINDOW_H - p(92), w, p(44)),
         }
 
     def panel_backdrop(self, surf, app):
@@ -166,31 +172,34 @@ class ClaritySkin(BaseSkin):
                          (rect.centerx, rect.y), (rect.centerx, rect.bottom), 1)
 
     def _switch(self, surf, rect, label, on):
+        p = theme.px
         s = self.fonts["small"].render(label, True, theme.TEXT if on else theme.TEXT_DIM)
-        surf.blit(s, (rect.x + 4, rect.centery - s.get_height() // 2))
-        track = pygame.Rect(0, 0, 34, 16)
-        track.midright = (rect.right - 4, rect.centery)
+        surf.blit(s, (rect.x + p(4), rect.centery - s.get_height() // 2))
+        track = pygame.Rect(0, 0, p(34), p(16))
+        track.midright = (rect.right - p(4), rect.centery)
         col = theme.LEGAL_MOVE_DOT if on else self._tint(theme.TEXT_DIM, 120)
-        pygame.draw.rect(surf, col, track, border_radius=8)
-        knob = track.right - 8 if on else track.left + 8
-        pygame.draw.circle(surf, (245, 245, 245), (knob, track.centery), 6)
+        pygame.draw.rect(surf, col, track, border_radius=p(8))
+        knob = track.right - p(8) if on else track.left + p(8)
+        pygame.draw.circle(surf, (245, 245, 245), (knob, track.centery), p(6))
 
     def _safety_bar(self, surf, x, y, w, name, prob, cbool):
+        p = theme.px
         surf.blit(self.fonts["small"].render(name, True, theme.team_label(cbool)), (x, y))
         danger = prob > 0
         col = theme.EVENT_ABSENT_COLOR if danger else theme.LEGAL_MOVE_DOT
         word = render.frac_str(prob) if danger else theme.TERMS["safe_word"]
         ws = self.fonts["small"].render(word, True, col)
         surf.blit(ws, (x + w - ws.get_width(), y))
-        self._hbar(surf, pygame.Rect(x, y + 20, w, 6), float(prob), col,
-                   self._tint(theme.TEXT_DIM, 90), radius=3)
+        self._hbar(surf, pygame.Rect(x, y + p(20), w, p(6)), float(prob), col,
+                   self._tint(theme.TEXT_DIM, 90), radius=p(3))
 
     def draw_panel(self, surf, app, status, check_lines):
+        p = theme.px
         self.panel_backdrop(surf, app)
         qb, config = app.qb, app.config
         rects = self.panel_rects()
-        x = PANEL_X + 18
-        right = PANEL_X + PANEL_W - 18
+        x = PANEL_X + p(18)
+        right = PANEL_X + PANEL_W - p(18)
         w = right - x
 
         # --- turn header --------------------------------------------------
@@ -201,18 +210,18 @@ class ClaritySkin(BaseSkin):
         hero = pygame.Rect(x, self._HERO_Y, w, self._HERO_H)
         pygame.draw.rect(surf, self._mix(theme.PANEL_BG, (255, 255, 255), 0.05), hero)
         pygame.draw.rect(surf, self._tint(theme.TEXT_DIM, 110), hero, width=1)
-        pygame.draw.rect(surf, theme.team_label(qb.turn), (hero.x, hero.y, 6, hero.h))
-        self.draw_token(surf, qb.turn, chess.KING, (hero.x + 42, hero.centery), radius=24)
+        pygame.draw.rect(surf, theme.team_label(qb.turn), (hero.x, hero.y, p(6), hero.h))
+        self.draw_token(surf, qb.turn, chess.KING, (hero.x + p(42), hero.centery), radius=p(24))
         surf.blit(self.fonts["hero"].render(config.team_name(qb.turn), True, theme.TEXT),
-                  (hero.x + 74, hero.y + 10))
-        self._caps_label(surf, "to move", (hero.x + 76, hero.y + 42))
+                  (hero.x + p(74), hero.y + p(10)))
+        self._caps_label(surf, "to move", (hero.x + p(76), hero.y + p(42)))
         if config.splitting_enabled:
             mode_col = theme.SPLIT_PICK_RING if app.mode == "split" else theme.LEGAL_MOVE_DOT
-            self._chip(surf, app.mode.upper(), (hero.right - 34, hero.y + 18),
+            self._chip(surf, app.mode.upper(), (hero.right - p(34), hero.y + p(18)),
                        mode_col, (16, 16, 18))
 
         # --- controls ---------------------------------------------------------
-        self._caps_label(surf, "controls", (x, hero.bottom + 8), rule_to=right)
+        self._caps_label(surf, "controls", (x, hero.bottom + p(8)), rule_to=right)
         if config.splitting_enabled:
             self._segmented(surf, rects["mode"], ["MOVE", "SPLIT"],
                             1 if app.mode == "split" else 0)
@@ -233,45 +242,45 @@ class ClaritySkin(BaseSkin):
         self._flat_button(surf, rects["settings"], "Settings  (O)")
 
         # --- king safety ------------------------------------------------------
-        y = rects["settings"].bottom + 16
+        y = rects["settings"].bottom + p(16)
         if app.show_check:
             self._caps_label(surf, "king safety", (x, y), rule_to=right)
-            y += 20
+            y += p(20)
             for name, prob, cbool in self._check_values(app):
                 self._safety_bar(surf, x, y, w, name, prob, cbool)
-                y += 34
+                y += p(34)
         else:
-            y += 4
+            y += p(4)
 
         # --- selected-piece inspector ----------------------------------------
         if app.selected is not None and qb.ghost_at(app.selected) is not None:
             self._caps_label(surf, "selected", (x, y), rule_to=right)
-            y = self.panel_extra(surf, app, x, y + 20)
-        y += 6
+            y = self.panel_extra(surf, app, x, y + p(20))
+        y += p(6)
 
         if status:
             surf.blit(self.fonts["body"].render(status, True, theme.ACCENT), (x, y))
-            y += 28
+            y += p(28)
 
         # --- log --------------------------------------------------------------
         self._caps_label(surf, "game log", (x, y), rule_to=right)
-        y += 18
-        footer_y = WINDOW_H - 40
+        y += p(18)
+        footer_y = WINDOW_H - p(40)
         self._draw_log_and_tray(surf, app, x, y,
-                                bottom=(footer_y - 8 if not qb.game_over else None))
+                                bottom=(footer_y - p(8) if not qb.game_over else None))
 
         # --- footer -----------------------------------------------------------
         cfg = (f"Collapse {config.collapse_mode.value} · "
                f"Split {'on' if config.splitting_enabled else 'off'}")
         surf.blit(self.fonts["tiny"].render(cfg.upper(), True, theme.TEXT_DIM), (x, footer_y))
         surf.blit(self.fonts["tiny"].render("F11 FULLSCREEN · TAB SWITCH UI", True,
-                                            theme.TEXT_DIM), (x, footer_y + 16))
+                                            theme.TEXT_DIM), (x, footer_y + p(16)))
 
         # --- game over --------------------------------------------------------
         if qb.game_over and qb.winner is not None:
             banner = f"{config.team_name(qb.winner).upper()} WINS"
             bs = self.fonts["title"].render(banner, True, theme.team_label(qb.winner))
-            surf.blit(bs, (x, rects["new_game"].y - 42))
+            surf.blit(bs, (x, rects["new_game"].y - p(42)))
             self._flat_button(surf, rects["new_game"], "New Game  (N)", active=True)
 
     # -------------------------------------------------------- inspector panel
@@ -283,22 +292,24 @@ class ClaritySkin(BaseSkin):
         ghost = qb.ghost_at(sel)
         if ghost is None:
             return y
+        p = theme.px
         pid = ghost.piece_id
         gs = sorted(qb.ghosts_of(pid), key=lambda g: -float(g.prob))
         piece = qb.pieces[pid]
         head = f"{app.config.team_name(piece.color)} {chess.piece_name(piece.ptype).capitalize()}"
         surf.blit(self.fonts["small"].render(head, True, self._aura_color(pid)), (x, y))
-        y += 22
-        bar_w = PANEL_X + theme.PANEL_WIDTH - 18 - (x + 44) - 40
+        y += p(22)
+        bar_w = PANEL_X + theme.PANEL_WIDTH - p(18) - (x + p(44)) - p(40)
         for g in gs:
             frac = float(g.prob)
             surf.blit(self.fonts["small"].render(chess.square_name(g.square), True, theme.TEXT),
                       (x, y))
-            track = pygame.Rect(x + 44, y + 2, bar_w, 14)
-            pygame.draw.rect(surf, self._tint(theme.TEXT_DIM, 90), track, border_radius=4)
+            track = pygame.Rect(x + p(44), y + p(2), bar_w, p(14))
+            pygame.draw.rect(surf, self._tint(theme.TEXT_DIM, 90), track, border_radius=p(4))
             pygame.draw.rect(surf, theme.ACCENT,
-                             (track.x, track.y, max(3, int(bar_w * frac)), 14), border_radius=4)
+                             (track.x, track.y, max(p(3), int(bar_w * frac)), p(14)),
+                             border_radius=p(4))
             fs = self.fonts["tiny"].render(render.frac_str(g.prob), True, theme.TEXT)
-            surf.blit(fs, (track.right + 6, y))
-            y += 22
-        return y + 4
+            surf.blit(fs, (track.right + p(6), y))
+            y += p(22)
+        return y + p(4)

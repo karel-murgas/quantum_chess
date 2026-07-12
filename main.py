@@ -17,25 +17,25 @@ import sys
 import pygame
 
 from quantumchess.config import GameConfig
-from quantumchess.ui import theme
+from quantumchess.ui import theme, present, pieces
 from quantumchess.ui.app import App, DEFAULT_SAVE_PATH
 from quantumchess.ui.menu import Menu
 
 
-def _run_loaded(screen, save_path):
+def _run_loaded(window, save_path):
     """Skip the menu and boot straight into ``save_path``.
 
     App.load_from replaces the board/config/rng/log/mode wholesale and re-applies
-    the saved theme, so we just construct App with a throwaway default config and
-    immediately load over it. Missing/corrupt saves are reported by load_from
-    (into the side log); to fail loudly at the command line instead we check the
-    file exists up front.
+    the saved theme + piece set, so we just construct App with a throwaway default
+    config and immediately load over it. Missing/corrupt saves are reported by
+    load_from (into the side log); to fail loudly at the command line instead we
+    check the file exists up front.
     """
     if not save_path.exists():
         print(f"No save file at {save_path} -- nothing to load. "
               f"Run 'python main.py' to start a new game.", file=sys.stderr)
         return
-    app = App(screen, GameConfig())
+    app = App(window, GameConfig())
     app.load_from(save_path)
     app.run()
 
@@ -52,18 +52,23 @@ def main():
 
     pygame.init()
     pygame.display.set_caption("Quantum Chess")
-    # SCALED makes the fixed WINDOW_W x WINDOW_H layout scale to fit the display
-    # when fullscreen (F11), and translates mouse coords back to logical space
-    # so hit-testing keeps working unchanged.
-    screen = pygame.display.set_mode((theme.WINDOW_W, theme.WINDOW_H), pygame.SCALED)
+    # The window starts at the base (unscaled) layout size and is resizable /
+    # fullscreen-toggleable. Everything is drawn onto offscreen logical surfaces
+    # and smooth-scaled to fit this window each frame (see ui/present.py) -- so
+    # the pixels stay crisp at any window size instead of the old nearest-
+    # neighbour SCALED upscale.
+    window = pygame.display.set_mode((theme.MENU_W, theme.MENU_H), pygame.RESIZABLE)
 
     if args.load is not None:
         from pathlib import Path
-        _run_loaded(screen, Path(args.load))
+        _run_loaded(window, Path(args.load))
         pygame.quit()
         return
 
-    menu = Menu(screen)
+    # The menu is authored at the base resolution; it draws to its own surface,
+    # which present() scales into the window.
+    menu_surf = pygame.Surface((theme.MENU_W, theme.MENU_H))
+    menu = Menu(menu_surf)
     clock = pygame.time.Clock()
     config = None
     while config is None:
@@ -72,20 +77,24 @@ def main():
             if event.type == pygame.QUIT:
                 pygame.quit()
                 return
-            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                result = menu.handle_click(event.pos)
+            if event.type == pygame.VIDEORESIZE and not present.is_fullscreen():
+                window = pygame.display.set_mode(event.size, pygame.RESIZABLE)
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                result = menu.handle_click(present.to_logical(event.pos))
                 if result is not None:
                     _action, config = result
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_F11:
-                    pygame.display.toggle_fullscreen()
+                    window = present.toggle_fullscreen(window)
                 else:
                     menu.handle_keydown(event)
         menu.draw()
+        present.present(window, menu_surf)
         pygame.display.flip()
 
     theme.apply_theme(config.theme, config.white_color, config.black_color)
-    App(screen, config).run()
+    pieces.set_active(config.white_piece_set, config.black_piece_set)
+    App(window, config).run()
     pygame.quit()
 
 

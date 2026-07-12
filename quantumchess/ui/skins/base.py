@@ -32,7 +32,7 @@ import chess
 import pygame
 
 from ... import check
-from .. import render, theme
+from .. import render, theme, present
 
 SQUARE = theme.SQUARE
 BOARD_MARGIN = theme.BOARD_MARGIN
@@ -63,24 +63,29 @@ class BaseSkin:
 
     # ---------------------------------------------------------------- fonts
     def _build_fonts(self):
+        # Point sizes are authored at the base resolution, then scaled into the
+        # supersampled render space (theme.px) so text is drawn at 2x and
+        # downscaled crisp -- the same SSAA that de-pixelates the board. The
+        # piece glyph size derives from SQUARE, which is already scaled.
         f = self.FAMILY
+        px = theme.px
         return {
-            "hero": pygame.font.SysFont(f, 30, bold=True),
-            "title": pygame.font.SysFont(f, 26, bold=True),
-            "body": pygame.font.SysFont(f, 20),
-            "small": pygame.font.SysFont(f, 16),
-            "tiny": pygame.font.SysFont(f, 12, bold=True),
-            "banner": pygame.font.SysFont(f, 44, bold=True),
+            "hero": pygame.font.SysFont(f, px(30), bold=True),
+            "title": pygame.font.SysFont(f, px(26), bold=True),
+            "body": pygame.font.SysFont(f, px(20)),
+            "small": pygame.font.SysFont(f, px(16)),
+            "tiny": pygame.font.SysFont(f, px(12), bold=True),
+            "banner": pygame.font.SysFont(f, px(44), bold=True),
             "piece": pygame.font.SysFont(self.SYMBOL, int(SQUARE * 0.62)),
-            "label": pygame.font.SysFont(f, 15, bold=True),
-            "coord": pygame.font.SysFont(f, 13, bold=True),
-            "icon": pygame.font.SysFont(self.SYMBOL, 18),
+            "label": pygame.font.SysFont(f, px(15), bold=True),
+            "coord": pygame.font.SysFont(f, px(13), bold=True),
+            "icon": pygame.font.SysFont(self.SYMBOL, px(18)),
             # Ghost-probability chip label (see _chip below): always the base
             # family, never a skin's own typographic personality (e.g. HUD's
             # Consolas) -- a monospace "/" glyph's own bearing threw the
             # visual centre off even though the bounding box was centred, so
             # every skin now renders this one label identically to Clarity's.
-            "chip": pygame.font.SysFont(BaseSkin.FAMILY, 12, bold=True),
+            "chip": pygame.font.SysFont(BaseSkin.FAMILY, px(12), bold=True),
         }
 
     # ----------------------------------------------------------- utilities
@@ -102,8 +107,8 @@ class BaseSkin:
         (Polished's own destination rings, reused by Clarity's)."""
         for i in range(n):
             a = 2 * math.pi * i / n
-            p = (center[0] + int(r * math.cos(a)), center[1] + int(r * math.sin(a)))
-            pygame.draw.circle(surf, color, p, 3)
+            pt = (center[0] + int(r * math.cos(a)), center[1] + int(r * math.sin(a)))
+            pygame.draw.circle(surf, color, pt, theme.px(3))
 
     def _chip(self, surf, text, center, bg, fg, font=None):
         """A small rounded pill: opaque ``bg`` behind ``fg``-coloured text,
@@ -112,7 +117,7 @@ class BaseSkin:
         drawn straight onto ``surf`` with plain opaque fills, no intermediate
         alpha-blended surface, which is what keeps the centring exact."""
         s = (font or self.fonts["chip"]).render(text, True, fg)
-        pad = 4
+        pad = theme.px(4)
         w, h = s.get_width() + pad * 2, s.get_height() + pad
         chip = pygame.Rect(0, 0, w, h)
         chip.center = center
@@ -128,8 +133,10 @@ class BaseSkin:
         return 0.5 + 0.5 * math.sin(2 * math.pi * self.now() / period)
 
     def hover_square(self):
-        sq = render.square_at_pixel(pygame.mouse.get_pos())
-        return sq
+        # The mouse position is in physical-window pixels; map it back onto the
+        # supersampled logical surface (letterbox-aware) before hit-testing, or
+        # the hover highlight lands on the wrong square.
+        return render.square_at_pixel(present.to_logical(pygame.mouse.get_pos()))
 
     @staticmethod
     def _token_colors(color: bool):
@@ -155,7 +162,7 @@ class BaseSkin:
         """A horizontal fill bar (threat gauges, inspector distribution)."""
         pygame.draw.rect(surf, bg, rect, border_radius=radius)
         if frac > 0:
-            w = max(3, int(rect.w * min(1.0, float(frac))))
+            w = max(theme.px(3), int(rect.w * min(1.0, float(frac))))
             pygame.draw.rect(surf, fg, (rect.x, rect.y, w, rect.h), border_radius=radius)
 
     def _caps_label(self, surf, text, pos, font=None, color=None, rule_to=None):
@@ -168,17 +175,8 @@ class BaseSkin:
         if rule_to is not None:
             ly = pos[1] + s.get_height() // 2
             pygame.draw.line(surf, self._tint(theme.TEXT_DIM, 90),
-                             (pos[0] + s.get_width() + 10, ly), (rule_to, ly), 1)
+                             (pos[0] + s.get_width() + theme.px(10), ly), (rule_to, ly), theme.px(1))
         return pos[1] + s.get_height()
-
-    def _round_card(self, surf, rect, fill, *, border=None, radius=10, shadow=0):
-        if shadow:
-            sh = pygame.Surface((rect.w, rect.h + shadow), pygame.SRCALPHA)
-            pygame.draw.rect(sh, (0, 0, 0, 90), sh.get_rect(), border_radius=radius)
-            surf.blit(sh, (rect.x, rect.y + shadow))
-        pygame.draw.rect(surf, fill, rect, border_radius=radius)
-        if border is not None:
-            pygame.draw.rect(surf, border, rect, width=2, border_radius=radius)
 
     # ------------------------------------------------------------- orchestr.
     def draw(self, app):
@@ -224,7 +222,7 @@ class BaseSkin:
             light = (chess.square_file(square) + chess.square_rank(square)) % 2 == 1
             pygame.draw.rect(surf, self.square_color(square, light), rect)
         self.draw_hover(surf, app)
-        pygame.draw.rect(surf, theme.BOARD_BORDER, self.board_rect(), width=3)
+        pygame.draw.rect(surf, theme.BOARD_BORDER, self.board_rect(), width=theme.px(3))
         self.draw_coordinates(surf)
 
     def draw_hover(self, surf, app):
@@ -453,22 +451,23 @@ class BaseSkin:
         return y
 
     def _draw_log_and_tray(self, surf, app, x, log_top, bottom=None):
+        p = theme.px
         qb, config = app.qb, app.config
         rects = self.panel_rects()
-        panel_right = PANEL_X + PANEL_W - 20
-        default_bottom = (rects["new_game"].y - 60) if qb.game_over else (WINDOW_H - 16)
+        panel_right = PANEL_X + PANEL_W - p(20)
+        default_bottom = (rects["new_game"].y - p(60)) if qb.game_over else (WINDOW_H - p(16))
         bottom_limit = min(default_bottom, bottom) if bottom is not None else default_bottom
 
         if app.show_captured:
-            tray_width, col_gap = 130, 18
+            tray_width, col_gap = p(130), p(18)
             tray_x = panel_right - tray_width
             log_right = tray_x - col_gap
             pygame.draw.line(surf, theme.TEXT_DIM, (tray_x - col_gap // 2, log_top),
-                             (tray_x - col_gap // 2, bottom_limit), 1)
+                             (tray_x - col_gap // 2, bottom_limit), p(1))
         else:
             log_right = panel_right
 
-        line_h = 20
+        line_h = p(20)
         max_width = log_right - x
         max_lines = max(0, (bottom_limit - log_top) // line_h)
         name_colors = {
@@ -494,7 +493,7 @@ class BaseSkin:
             ty = render._draw_captured_column(surf, self.fonts["small"], self.fonts["icon"],
                                               config.team_name(chess.WHITE), white,
                                               chess.WHITE, tray_x, log_top, panel_right, icon_r=icon_r)
-            ty += 10
+            ty += p(10)
             render._draw_captured_column(surf, self.fonts["small"], self.fonts["icon"],
                                          config.team_name(chess.BLACK), black,
                                          chess.BLACK, tray_x, ty, panel_right, icon_r=icon_r)

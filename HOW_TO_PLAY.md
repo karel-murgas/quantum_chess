@@ -32,8 +32,22 @@ You'll see a setup menu first:
 - **Seed.** Controls the random number generator behind every collapse. Click
   "Reroll seed" for a different one; write down a seed if you want to replay
   the exact same sequence of dice rolls later.
+- **Board theme — Origin / Cyberpunk.** Origin is the classic wood board;
+  Cyberpunk is a neon-on-dark look you can tint with each team's colour (and it
+  reskins the side-log wording). Cyberpunk also gets a subtle vignette.
+- **Piece sets — Classic / Merida / Neon / Unicode, chosen per team.** Each
+  side picks its *own* figures (there's a row for each team), so White can play
+  Classic pieces while Black plays Neon on the same board. *Classic* and
+  *Merida* are proper chess piece artwork; *Neon* renders that side as a glowing
+  silhouette in its team colour (great with the Cyberpunk theme); *Unicode* is
+  the original simple glyph tokens. Each option shows a little king preview, in
+  that team's colour, so you can see the look before you pick.
+- **Team names & colours.** Name each side and (Cyberpunk) pick an accent
+  colour; the "⇄" swaps who plays White (White always moves first). "Save
+  Teams" / "Load Teams" remembers a favourite theme + set + names + colours.
 
-Click **Start Game**.
+Click **Start Game**. The window is resizable, and **F11** toggles fullscreen —
+the board scales smoothly to fit, staying crisp.
 
 ## The board
 
@@ -192,5 +206,7 @@ new save overwrites the last one.
 | Save game | Click "Save", or press `F5` |
 | Load game | Click "Load", or press `F9` |
 | Toggle removed-pieces tray | Click "Removed pieces", or press `C` |
-| Open Settings (change theme/names/colours/dials) | Click "Settings", or press `O` |
+| Open Settings (change theme/piece set/names/colours/dials) | Click "Settings", or press `O` |
 | Resume from Settings without changing anything | Press `Escape` |
+| Switch UI view (Clarity / HUD) | Click the view button, or press `Tab` |
+| Toggle fullscreen | Press `F11` |

@@ -51,7 +51,8 @@ def test_from_dict_defaults_has_moved_false_for_old_saves():
 
 def test_to_dict_from_dict_round_trips_board_state():
     qb = _superposed_board()
-    config = GameConfig(collapse_mode=CollapseMode.PARTIAL, splitting_enabled=True, seed=7)
+    config = GameConfig(collapse_mode=CollapseMode.PARTIAL, splitting_enabled=True, seed=7,
+                        white_piece_set="merida", black_piece_set="neon")
     rng = __import__("random").Random(7)
     rng.random()   # advance state so we can check it's actually preserved, not just re-seeded
     log = ["Black Pawn e7->e5.", "White Bishop splits d3 -> c4 (1/4), a6 (1/4)"]
@@ -72,6 +73,8 @@ def test_to_dict_from_dict_round_trips_board_state():
     assert config2.collapse_mode == config.collapse_mode
     assert config2.splitting_enabled == config.splitting_enabled
     assert config2.seed == config.seed
+    assert config2.white_piece_set == "merida"
+    assert config2.black_piece_set == "neon"
 
     assert rng2.getstate() == rng.getstate()
     assert mode2 == "split"
@@ -122,13 +125,16 @@ def test_resumed_rng_continues_same_sequence_as_original():
 
 def test_save_teams_then_load_teams_round_trips_via_disk(tmp_path):
     path = tmp_path / "nested" / "teams.json"   # parent dir doesn't exist yet
-    save_teams(path, theme="cyberpunk", white_name="Alice", black_name="Bob",
+    save_teams(path, theme="cyberpunk", white_piece_set="neon", black_piece_set="merida",
+               white_name="Alice", black_name="Bob",
                white_color=(255, 46, 199), black_color=(0, 224, 255))
     assert path.exists()
 
     data = load_teams(path)
     assert data == {
         "theme": "cyberpunk",
+        "white_piece_set": "neon",
+        "black_piece_set": "merida",
         "white_name": "Alice",
         "black_name": "Bob",
         "white_color": (255, 46, 199),
@@ -136,6 +142,30 @@ def test_save_teams_then_load_teams_round_trips_via_disk(tmp_path):
     }
     # colours come back as tuples, not the JSON lists they were stored as
     assert isinstance(data["white_color"], tuple)
+
+
+def test_load_teams_migrates_old_single_piece_set(tmp_path):
+    """A teams file with the old single "piece_set" key applies it to both
+    sides; one with neither falls back to cburnett (grow-only schema, no
+    version bump)."""
+    migrate = tmp_path / "migrate.json"
+    migrate.write_text(
+        '{"version": 1, "theme": "origin", "piece_set": "merida",'
+        ' "white_name": "W", "black_name": "B",'
+        ' "white_color": [1, 2, 3], "black_color": [4, 5, 6]}',
+        encoding="utf-8")
+    data = load_teams(migrate)
+    assert data["white_piece_set"] == "merida"
+    assert data["black_piece_set"] == "merida"
+
+    ancient = tmp_path / "ancient.json"
+    ancient.write_text(
+        '{"version": 1, "theme": "origin", "white_name": "W", "black_name": "B",'
+        ' "white_color": [1, 2, 3], "black_color": [4, 5, 6]}',
+        encoding="utf-8")
+    data2 = load_teams(ancient)
+    assert data2["white_piece_set"] == "cburnett"
+    assert data2["black_piece_set"] == "cburnett"
 
 
 def test_load_teams_rejects_unknown_version(tmp_path):

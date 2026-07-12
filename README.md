@@ -77,6 +77,7 @@ and **[PLAN.md](PLAN.md)** for the full ruleset and design rationale.
 | [CLAUDE.md](CLAUDE.md) | Detailed engineering log for AI-assisted development (Claude Code) |
 | [HOW_TO_PLAY.md](HOW_TO_PLAY.md) | Player-facing rules and controls |
 | [UI_REDESIGN.md](UI_REDESIGN.md) | History of the UI skin redesign playtest |
+| [ONLINE_PLAY.md](ONLINE_PLAY.md) | Design notes for two-player online play (not yet built) |
 | [options.md](options.md) | Original design-dial brainstorm |
 
 ## Status

@@ -14,8 +14,8 @@ import chess
 import pygame
 
 from ..model import QuantumBoard
-from . import theme
-from .animation import Beat, Token
+from . import theme, pieces
+from .animation import Token
 
 
 def square_rect(square: int) -> pygame.Rect:
@@ -36,61 +36,24 @@ def square_at_pixel(pos) -> Optional[int]:
     return chess.square(file, rank)
 
 
-def draw_board(surface):
-    for square in chess.SQUARES:
-        rect = square_rect(square)
-        light = (chess.square_file(square) + chess.square_rank(square)) % 2 == 1
-        color = theme.LIGHT_SQUARE if light else theme.DARK_SQUARE
-        pygame.draw.rect(surface, color, rect)
-    board_rect = pygame.Rect(theme.BOARD_MARGIN, theme.BOARD_MARGIN,
-                             theme.BOARD_PIXELS, theme.BOARD_PIXELS)
-    pygame.draw.rect(surface, theme.BOARD_BORDER, board_rect, width=3)
-
-
 def _aura_color(piece_id: int):
     return theme.AURA_PALETTE[piece_id % len(theme.AURA_PALETTE)]
-
-
-def draw_highlights(surface, qb: QuantumBoard, selected_square, legal_by_square,
-                    split_pick_a, check_by_square=None, fonts=None):
-    if selected_square is not None:
-        ghost = qb.ghost_at(selected_square)
-        if ghost is not None:
-            for g in qb.ghosts_of(ghost.piece_id):
-                pygame.draw.rect(surface, _aura_color(ghost.piece_id),
-                                 square_rect(g.square), width=4)
-        pygame.draw.rect(surface, theme.SELECTED_RING, square_rect(selected_square), width=5)
-
-    dot_colors = {"merge": theme.LEGAL_MERGE_DOT, "contact": theme.LEGAL_CONTACT_DOT}
-    for sq, kind in legal_by_square.items():
-        rect = square_rect(sq)
-        color = dot_colors.get(kind, theme.LEGAL_MOVE_DOT)
-        pygame.draw.circle(surface, color, rect.center, theme.SQUARE // 8)
-
-    # A move that would raise the mover's OWN king danger is flagged in danger
-    # red -- a warning ring plus the resulting check fraction (feature 2).
-    if check_by_square:
-        for sq, prob in check_by_square.items():
-            _draw_danger_marker(surface, sq, prob, fonts)
-
-    if split_pick_a is not None:
-        pygame.draw.rect(surface, theme.SPLIT_PICK_RING, square_rect(split_pick_a), width=5)
 
 
 def _draw_danger_marker(surface, square: int, prob: Fraction, fonts=None):
     """Red warning ring on a self-exposing destination, with the resulting
     check fraction chipped into its top-left corner."""
     rect = square_rect(square)
-    pygame.draw.rect(surface, theme.EVENT_ABSENT_COLOR, rect, width=4)
+    pygame.draw.rect(surface, theme.EVENT_ABSENT_COLOR, rect, width=theme.px(4))
     if fonts is None:
         return
     label = fonts["label"].render(frac_str(prob), True, theme.EVENT_ABSENT_COLOR)
-    pad = 3
+    pad = theme.px(3)
     chip = pygame.Surface((label.get_width() + pad * 2, label.get_height() + pad * 2),
                           pygame.SRCALPHA)
     chip.fill((8, 8, 12, 190))
     chip.blit(label, (pad, pad))
-    surface.blit(chip, (rect.x + 2, rect.y + 2))
+    surface.blit(chip, (rect.x + theme.px(2), rect.y + theme.px(2)))
 
 
 def frac_str(f: Fraction) -> str:
@@ -170,25 +133,54 @@ def _prob_alpha(prob: Fraction, solid: bool) -> int:
 
 def draw_token(surface, piece_font, color: bool, ptype: int, center, *, alpha: int = 255,
                radius: Optional[int] = None):
-    """Draw a single piece token (filled circle + border + glyph) centred at
-    ``center`` with the given opacity. Shared by the live board, the
-    collapse animation, and the side panel's removed-pieces tray (which
-    passes a smaller ``radius`` and a smaller ``piece_font`` to match)."""
+    """Draw a single piece token centred at ``center`` with the given opacity.
+    Shared by the live board, the collapse animation, and the side panel's
+    removed-pieces tray (which passes a smaller ``radius``/``piece_font``).
+
+    The look depends on the active piece set (see ``ui/pieces.py``): the
+    ``"unicode"`` set keeps the original filled-circle-plus-glyph token (and
+    uses ``piece_font``); every other set blits real piece art (SVG-rasterized
+    or the recoloured neon silhouette) with a soft shadow or neon glow, so no
+    circle -- the art itself carries the side's colour and shape."""
     alpha = max(0, min(255, alpha))
     if alpha == 0:
         return
     token_r = radius if radius is not None else int(theme.SQUARE * 0.40)
-    token_surf = pygame.Surface((token_r * 2, token_r * 2), pygame.SRCALPHA)
-    if color == chess.WHITE:
-        fill, border, ink = theme.WHITE_TOKEN, theme.WHITE_TOKEN_BORDER, theme.WHITE_INK
-    else:
-        fill, border, ink = theme.BLACK_TOKEN, theme.BLACK_TOKEN_BORDER, theme.BLACK_INK
 
-    pygame.draw.circle(token_surf, (*fill, alpha), (token_r, token_r), token_r)
-    pygame.draw.circle(token_surf, (*border, alpha), (token_r, token_r), token_r, width=3)
-    glyph = piece_font.render(theme.GLYPH[ptype], True, (*ink, alpha))
-    token_surf.blit(glyph, glyph.get_rect(center=(token_r, token_r)))
-    surface.blit(token_surf, token_surf.get_rect(center=center))
+    if pieces.active(color) == "unicode":
+        token_surf = pygame.Surface((token_r * 2, token_r * 2), pygame.SRCALPHA)
+        if color == chess.WHITE:
+            fill, border, ink = theme.WHITE_TOKEN, theme.WHITE_TOKEN_BORDER, theme.WHITE_INK
+        else:
+            fill, border, ink = theme.BLACK_TOKEN, theme.BLACK_TOKEN_BORDER, theme.BLACK_INK
+        pygame.draw.circle(token_surf, (*fill, alpha), (token_r, token_r), token_r)
+        pygame.draw.circle(token_surf, (*border, alpha), (token_r, token_r), token_r,
+                           width=theme.px(3))
+        glyph = piece_font.render(theme.GLYPH[ptype], True, (*ink, alpha))
+        token_surf.blit(glyph, glyph.get_rect(center=(token_r, token_r)))
+        surface.blit(token_surf, token_surf.get_rect(center=center))
+        return
+
+    blit_piece_art(surface, color, ptype, center, token_r, alpha)
+
+
+def blit_piece_art(surface, color: bool, ptype: int, center, token_r: int, alpha: int = 255):
+    """Blit real piece art (an SVG-rasterized or neon-silhouette token) centred
+    at ``center``. Shared by ``draw_token`` and the HUD/Clarity skins, which use
+    it for every set except ``"unicode"`` -- so all three views render the same
+    art, on top of whatever board/backdrop the skin drew. The piece fills ~the
+    whole square (``token_r*2`` is 0.8*SQUARE, so 2.4x gives a natural piece
+    height with a small margin); the neon set gets a side-keyed glow."""
+    set_name = pieces.active(color)
+    glow = None
+    if set_name == "neon":
+        glow = theme.WHITE_NEON if color == chess.WHITE else theme.BLACK_NEON
+    art_size = max(1, round(token_r * 2.4))
+    tok = pieces.render_token(set_name, ptype, color, art_size, glow=glow)
+    if alpha < 255:
+        tok = tok.copy()
+        tok.set_alpha(alpha)
+    surface.blit(tok, tok.get_rect(center=center))
 
 
 def _draw_prob_label(surface, label_font, prob: Fraction, center, alpha: int = 255, color: bool = chess.WHITE):
@@ -203,17 +195,6 @@ def _draw_prob_label(surface, label_font, prob: Fraction, center, alpha: int = 2
     surface.blit(label, (x, y))
 
 
-def draw_pieces(surface, qb: QuantumBoard, piece_font, label_font):
-    for ghost in qb.ghosts:
-        piece = qb.pieces[ghost.piece_id]
-        center = square_rect(ghost.square).center
-        solid = qb.is_solid(ghost.piece_id)
-        draw_token(surface, piece_font, piece.color, piece.ptype, center,
-                   alpha=_prob_alpha(ghost.prob, solid))
-        if not solid:
-            _draw_prob_label(surface, label_font, ghost.prob, center, color=piece.color)
-
-
 # --------------------------------------------------------------- collapse anim
 def _ease(t: float) -> float:
     """Smoothstep -- eases a linear 0..1 into an accelerate/decelerate curve."""
@@ -225,14 +206,6 @@ def _lerp(a, b, t):
     return (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
 
 
-def _draw_anim_token(surface, piece_font, label_font, token: Token, center, alpha_mult=1.0):
-    base = _prob_alpha(token.prob, token.solid)
-    alpha = int(base * alpha_mult)
-    draw_token(surface, piece_font, token.color, token.ptype, center, alpha=alpha)
-    if not token.solid and alpha_mult > 0.15:
-        _draw_prob_label(surface, label_font, token.prob, center, alpha=int(255 * alpha_mult), color=token.color)
-
-
 def _draw_flash(surface, square: int, present: bool, t: float):
     """A green (really there) / red (not there) pulse on the measured square,
     brightest mid-beat so the eye catches the reveal."""
@@ -242,7 +215,7 @@ def _draw_flash(surface, square: int, present: bool, t: float):
     overlay = pygame.Surface((rect.w, rect.h), pygame.SRCALPHA)
     overlay.fill((*color, int(150 * pulse)))
     surface.blit(overlay, rect.topleft)
-    pygame.draw.rect(surface, color, rect, width=max(2, int(7 * pulse)))
+    pygame.draw.rect(surface, color, rect, width=max(theme.px(2), int(theme.px(7) * pulse)))
 
 
 def _draw_shatter(surface, piece_font, token: Token, t: float):
@@ -250,7 +223,7 @@ def _draw_shatter(surface, piece_font, token: Token, t: float):
     center = square_rect(token.square).center
     draw_token(surface, piece_font, token.color, token.ptype, center, alpha=int(220 * (1 - t)))
     radius = int(theme.SQUARE * (0.18 + 0.4 * t))
-    width = max(1, int(6 * (1 - t)))
+    width = max(theme.px(1), int(theme.px(6) * (1 - t)))
     if 1 - t > 0.03:
         pygame.draw.circle(surface, theme.EVENT_ABSENT_COLOR, center, radius, width=width)
 
@@ -263,39 +236,49 @@ def _draw_caption(surface, font, text: str, square: int, t: float):
     rect = square_rect(square)
     surf = font.render(text, True, theme.ACCENT)
     surf.set_alpha(alpha)
-    pad = 5
+    pad = theme.px(5)
     chip = pygame.Surface((surf.get_width() + pad * 2, surf.get_height() + pad * 2),
                           pygame.SRCALPHA)
     chip.fill((8, 8, 12, int(160 * alpha / 255)))
-    cx, top = rect.centerx, rect.top - 6 - int(18 * t)
+    cx, top = rect.centerx, rect.top - theme.px(6) - int(theme.px(18) * t)
     surface.blit(chip, chip.get_rect(center=(cx, top)))
     surface.blit(surf, surf.get_rect(center=(cx, top)))
 
 
-def draw_beat(surface, beat: Beat, t: float, fonts):
-    """Render one collapse-animation beat at local progress ``t`` in [0, 1]."""
-    piece_font, label_font = fonts["piece"], fonts["label"]
-    te = _ease(t)
+# ------------------------------------------------------------------- vignette
+_vignette_src = None      # small radial mask, built once
+_vignette_scaled = {}     # size -> mask scaled to that surface
 
-    if beat.flash_square is not None:                       # behind the tokens
-        _draw_flash(surface, beat.flash_square, bool(beat.flash_present), t)
 
-    for tok in beat.rest:
-        _draw_anim_token(surface, piece_font, label_font, tok, square_rect(tok.square).center)
+def _vignette_source():
+    """A small radial darkening mask (transparent centre, dark corners), built
+    once at low resolution and smooth-scaled up per surface size -- an
+    inexpensive way to get a soft elliptical vignette with no per-pixel work
+    at draw time."""
+    global _vignette_src
+    if _vignette_src is None:
+        n = 96
+        s = pygame.Surface((n, n), pygame.SRCALPHA)
+        c = (n - 1) / 2
+        maxd = (c * c + c * c) ** 0.5
+        for y in range(n):
+            for x in range(n):
+                d = ((x - c) ** 2 + (y - c) ** 2) ** 0.5 / maxd
+                a = 0 if d < 0.5 else min(160, int(160 * ((d - 0.5) / 0.5) ** 1.8))
+                s.set_at((x, y), (0, 0, 0, a))
+        _vignette_src = s
+    return _vignette_src
 
-    for tok, frm in beat.travel:
-        center = _lerp(square_rect(frm).center, square_rect(tok.square).center, te)
-        _draw_anim_token(surface, piece_font, label_font, tok, center)
 
-    for tok in beat.fades:
-        _draw_anim_token(surface, piece_font, label_font, tok,
-                         square_rect(tok.square).center, alpha_mult=max(0.0, 1 - t))
-
-    if beat.shatter is not None:
-        _draw_shatter(surface, piece_font, beat.shatter, t)
-
-    if beat.caption:
-        _draw_caption(surface, fonts["label"], beat.caption, beat.caption_square, t)
+def draw_vignette(surface):
+    """Blit a soft dark vignette over the whole frame (used on the cyberpunk
+    theme for a moodier, more 'screen-lit' look)."""
+    size = surface.get_size()
+    mask = _vignette_scaled.get(size)
+    if mask is None:
+        mask = pygame.transform.smoothscale(_vignette_source(), size)
+        _vignette_scaled[size] = mask
+    surface.blit(mask, (0, 0))
 
 
 # ------------------------------------------------------ mass-move planning
@@ -304,21 +287,22 @@ def mass_controls_rects():
     mass move is being planned. Overlaid on the board (like the promotion
     picker) so a mouse-only player never needs the keyboard; hit-tested before
     board squares in ``App.handle_mouse_down``."""
-    bw, bh, gap = 156, 40, 16
+    bw, bh, gap = theme.px(156), theme.px(40), theme.px(16)
     total = bw * 2 + gap
     cx = theme.BOARD_MARGIN + (theme.BOARD_PIXELS - total) // 2
-    cy = theme.BOARD_MARGIN + theme.BOARD_PIXELS - bh - 12
+    cy = theme.BOARD_MARGIN + theme.BOARD_PIXELS - bh - theme.px(12)
     return {
         "confirm": pygame.Rect(cx, cy, bw, bh),
         "cancel": pygame.Rect(cx + bw + gap, cy, bw, bh),
     }
 
 
-def _draw_arrow(surface, a, b, color, width=4):
+def _draw_arrow(surface, a, b, color, width=None):
     """A directed line a -> b with a little arrowhead at b."""
+    width = width if width is not None else theme.px(4)
     pygame.draw.line(surface, color, a, b, width)
     ang = math.atan2(b[1] - a[1], b[0] - a[0])
-    size = 14
+    size = theme.px(14)
     for da in (math.radians(150), math.radians(-150)):
         tip = (b[0] + size * math.cos(ang + da), b[1] + size * math.sin(ang + da))
         pygame.draw.line(surface, color, b, tip, width)
@@ -330,9 +314,9 @@ def draw_plan_rings(surface, plan, plan_active, plan_piece):
     pieces (like the normal selection highlight)."""
     color = _aura_color(plan_piece)
     for frm in plan:
-        pygame.draw.rect(surface, color, square_rect(frm), width=4)
+        pygame.draw.rect(surface, color, square_rect(frm), width=theme.px(4))
     if plan_active is not None:
-        pygame.draw.rect(surface, theme.SELECTED_RING, square_rect(plan_active), width=5)
+        pygame.draw.rect(surface, theme.SELECTED_RING, square_rect(plan_active), width=theme.px(5))
 
 
 def draw_plan_arrows(surface, plan, plan_piece):
@@ -343,11 +327,11 @@ def draw_plan_arrows(surface, plan, plan_piece):
     for frm, to in plan.items():
         if frm == to:
             pygame.draw.circle(surface, color, square_rect(frm).center,
-                               theme.SQUARE // 10, width=3)
+                               theme.SQUARE // 10, width=theme.px(3))
             continue
         a, b = square_rect(frm).center, square_rect(to).center
         _draw_arrow(surface, a, b, color)
-        pygame.draw.circle(surface, color, b, theme.SQUARE // 6, width=3)
+        pygame.draw.circle(surface, color, b, theme.SQUARE // 6, width=theme.px(3))
 
 
 def draw_mass_controls(surface, fonts):
@@ -378,15 +362,17 @@ _CAPTURED_ORDER = (chess.QUEEN, chess.ROOK, chess.BISHOP, chess.KNIGHT, chess.PA
 
 
 def fit_captured_icon_radius(tray_width, available_height, white_n, black_n,
-                             default_r=12, min_r=5):
+                             default_r=None, min_r=None):
     """Shrink the removed-pieces tray's icon size until both team columns
     (header + wrapped icon grid, stacked with a gap between them) fit inside
     `available_height` -- otherwise a long game with many captures grows the
     tray past whatever's laid out below it (win banner, New Game button,
     footer text)."""
-    header_h, col_gap = 20, 10
+    default_r = default_r if default_r is not None else theme.px(12)
+    min_r = min_r if min_r is not None else theme.px(5)
+    header_h, col_gap = theme.px(20), theme.px(10)
     for r in range(default_r, min_r - 1, -1):
-        step = r * 2 + 4
+        step = r * 2 + theme.px(4)
         per_row = max(1, tray_width // step)
         white_rows = -(-white_n // per_row) if white_n else 1
         black_rows = -(-black_n // per_row) if black_n else 1
@@ -397,21 +383,22 @@ def fit_captured_icon_radius(tray_width, available_height, white_n, black_n,
 
 
 def _draw_captured_column(surface, small_font, icon_font, label, pieces, color,
-                          x, y, col_right, icon_r=12):
+                          x, y, col_right, icon_r=None):
     """Draw one team's removed-pieces list as a narrow vertical block: a
     coloured name header, then small piece-glyph tokens wrapping to as many
     rows as the ``col_right`` width forces. Returns the y just below it,
     for the next group (or caller) to continue from."""
+    icon_r = icon_r if icon_r is not None else theme.px(12)
     label_surf = small_font.render(label, True, theme.team_label(color))
     surface.blit(label_surf, (x, y))
-    y += label_surf.get_height() + 6
+    y += label_surf.get_height() + theme.px(6)
 
     if not pieces:
         none_surf = small_font.render("none", True, theme.TEXT_DIM)
         surface.blit(none_surf, (x, y))
-        return y + none_surf.get_height() + 4
+        return y + none_surf.get_height() + theme.px(4)
 
-    step = icon_r * 2 + 4
+    step = icon_r * 2 + theme.px(4)
     icon_x, icon_y = x + icon_r, y + icon_r
     for piece in pieces:
         if icon_x + icon_r > col_right:
@@ -432,145 +419,15 @@ def _draw_button(surface, rect, label, font, *, active=True, enabled=True,
         color, text_color = theme.ACCENT, (20, 20, 20)
     else:
         color, text_color = theme.PANEL_BG, theme.TEXT
-    pygame.draw.rect(surface, color, rect, border_radius=6)
-    pygame.draw.rect(surface, theme.TEXT_DIM, rect, width=2, border_radius=6)
+    pygame.draw.rect(surface, color, rect, border_radius=theme.px(6))
+    pygame.draw.rect(surface, theme.TEXT_DIM, rect, width=theme.px(2), border_radius=theme.px(6))
     surf = font.render(label, True, text_color)
     surface.blit(surf, surf.get_rect(center=rect.center))
 
 
-def draw_side_panel(surface, qb: QuantumBoard, config, mode, log_lines, status_text, fonts,
-                     confirm_surrender=False, show_captured=True, show_check=True,
-                     check_lines=None, confirm_quit=False):
-    panel_rect = pygame.Rect(theme.BOARD_MARGIN * 2 + theme.BOARD_PIXELS, 0,
-                             theme.PANEL_WIDTH, theme.WINDOW_H)
-    pygame.draw.rect(surface, theme.PANEL_BG, panel_rect)
-    rects = panel_rects()
-
-    x = panel_rect.x + 20
-    y = 20
-    turn = config.team_name(qb.turn)
-    name_surf = fonts["title"].render(turn, True, theme.team_label(qb.turn))
-    surface.blit(name_surf, (x, y))
-    rest_surf = fonts["title"].render(" to move", True, theme.TEXT)
-    surface.blit(rest_surf, (x + name_surf.get_width(), y))
-
-    if config.splitting_enabled:
-        _draw_button(surface, rects["mode"], f"Mode: {mode.upper()}  (M)",
-                    fonts["small"], active=(mode == "split"))
-    else:
-        _draw_button(surface, rects["mode"], "Splitting disabled", fonts["small"],
-                    enabled=False)
-
-    _draw_button(surface, rects["save"], "Save (F5)", fonts["small"], active=False)
-    _draw_button(surface, rects["load"], "Load (F9)", fonts["small"], active=False)
-
-    if not qb.game_over:
-        if confirm_surrender:
-            _draw_button(surface, rects["surrender"], "Confirm surrender? (click again)",
-                        fonts["small"], color=theme.EVENT_ABSENT_COLOR, text_color=(20, 20, 20))
-        else:
-            _draw_button(surface, rects["surrender"], "Surrender", fonts["small"], active=False)
-
-    _draw_button(surface, rects["captured"],
-                f"Removed pieces: {'ON' if show_captured else 'OFF'} (C)",
-                fonts["small"], active=show_captured)
-    _draw_button(surface, rects["check"],
-                f"Check warnings: {'ON' if show_check else 'OFF'} (K)",
-                fonts["small"], active=show_check)
-
-    if confirm_quit:
-        _draw_button(surface, rects["quit"], "Confirm quit? (click again)",
-                    fonts["small"], color=theme.EVENT_ABSENT_COLOR, text_color=(20, 20, 20))
-    else:
-        _draw_button(surface, rects["quit"], "Quit", fonts["small"], active=False)
-    y = rects["quit"].bottom + 10
-
-    if show_check and check_lines:
-        for text, color in check_lines:
-            surface.blit(fonts["body"].render(text, True, color), (x, y))
-            y += 26
-        y += 4
-
-    cfg_surf = fonts["small"].render(
-        f"Collapse: {config.collapse_mode.value}   Splitting: "
-        f"{'on' if config.splitting_enabled else 'off'}",
-        True, theme.TEXT_DIM)
-    surface.blit(cfg_surf, (x, y))
-    y += 22
-    hint_surf = fonts["small"].render("F11: Fullscreen", True, theme.TEXT_DIM)
-    surface.blit(hint_surf, (x, y))
-    y += 24
-
-    if status_text:
-        status_surf = fonts["body"].render(status_text, True, theme.ACCENT)
-        surface.blit(status_surf, (x, y))
-        y += 30
-
-    y += 8
-    pygame.draw.line(surface, theme.TEXT_DIM, (x, y), (panel_rect.right - 20, y), 1)
-    y += 14
-
-    # Below the divider the panel splits into two columns: the log on the
-    # left, and -- when toggled on -- a narrower removed-pieces column on the
-    # right where each side's lost pieces wrap into their own little grid.
-    log_top = y
-    bottom_limit = (rects["new_game"].y - 60) if qb.game_over else (theme.WINDOW_H - 16)
-    panel_right = panel_rect.right - 20
-
-    if show_captured:
-        tray_width = 130
-        col_gap = 18
-        tray_x = panel_right - tray_width
-        log_right = tray_x - col_gap
-        pygame.draw.line(surface, theme.TEXT_DIM,
-                         (tray_x - col_gap // 2, log_top), (tray_x - col_gap // 2, bottom_limit), 1)
-    else:
-        log_right = panel_right
-
-    # Word-wrap each log line to the log column's width, then show only as
-    # many visual lines as fit above the New Game area / window bottom.
-    line_h = 20
-    max_width = log_right - x
-    max_lines = max(0, (bottom_limit - log_top) // line_h)
-
-    name_colors = {
-        config.team_name(chess.WHITE): theme.team_label(chess.WHITE),
-        config.team_name(chess.BLACK): theme.team_label(chess.BLACK),
-    }
-    wrapped = []
-    for line in log_lines:
-        wrapped.extend(wrap_line(line, fonts["small"], max_width))
-    y = log_top
-    for line in wrapped[-max_lines:] if max_lines else []:
-        draw_log_line(surface, line, (x, y), fonts["small"], theme.TEXT, name_colors)
-        y += line_h
-
-    if show_captured:
-        removed = [p for p in qb.pieces.values() if not p.alive]
-        removed.sort(key=lambda p: _CAPTURED_ORDER.index(p.ptype)
-                     if p.ptype in _CAPTURED_ORDER else len(_CAPTURED_ORDER))
-        white_removed = [p for p in removed if p.color == chess.WHITE]
-        black_removed = [p for p in removed if p.color == chess.BLACK]
-        icon_r = fit_captured_icon_radius(tray_width, bottom_limit - log_top,
-                                          len(white_removed), len(black_removed))
-        ty = _draw_captured_column(surface, fonts["small"], fonts["icon"],
-                                   config.team_name(chess.WHITE), white_removed,
-                                   chess.WHITE, tray_x, log_top, panel_right, icon_r=icon_r)
-        ty += 10
-        _draw_captured_column(surface, fonts["small"], fonts["icon"],
-                              config.team_name(chess.BLACK), black_removed,
-                              chess.BLACK, tray_x, ty, panel_right, icon_r=icon_r)
-
-    if qb.game_over and qb.winner is not None:
-        banner = f"{config.team_name(qb.winner).upper()} WINS"
-        banner_surf = fonts["title"].render(banner, True, theme.team_label(qb.winner))
-        surface.blit(banner_surf, (x, rects["new_game"].y - 50))
-        _draw_button(surface, rects["new_game"], "New Game (N)", fonts["body"])
-
-
 def promotion_rects():
     order = (chess.QUEEN, chess.ROOK, chess.BISHOP, chess.KNIGHT)
-    box, gap = 70, 14
+    box, gap = theme.px(70), theme.px(14)
     total_w = box * 4 + gap * 3
     start_x = theme.BOARD_MARGIN + (theme.BOARD_PIXELS - total_w) // 2
     y = theme.BOARD_MARGIN + (theme.BOARD_PIXELS - box) // 2
@@ -590,10 +447,14 @@ def draw_promotion_picker(surface, color, fonts):
     fill = theme.WHITE_TOKEN if color == chess.WHITE else theme.BLACK_TOKEN
     ink = theme.WHITE_INK if color == chess.WHITE else theme.BLACK_INK
     for ptype, rect in promotion_rects().items():
-        pygame.draw.rect(surface, fill, rect, border_radius=8)
-        pygame.draw.rect(surface, theme.ACCENT, rect, width=2, border_radius=8)
-        glyph = fonts["piece"].render(theme.GLYPH[ptype], True, ink)
-        surface.blit(glyph, glyph.get_rect(center=rect.center))
+        pygame.draw.rect(surface, fill, rect, border_radius=theme.px(8))
+        pygame.draw.rect(surface, theme.ACCENT, rect, width=theme.px(2), border_radius=theme.px(8))
+        if pieces.active(color) == "unicode":
+            glyph = fonts["piece"].render(theme.GLYPH[ptype], True, ink)
+            surface.blit(glyph, glyph.get_rect(center=rect.center))
+        else:
+            # Show the active piece set's own art so the picker matches the board.
+            blit_piece_art(surface, color, ptype, rect.center, int(rect.w * 0.42))
 
 
 def promotion_choice_at(pos):

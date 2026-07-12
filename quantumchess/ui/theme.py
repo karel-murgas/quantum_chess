@@ -10,12 +10,36 @@ swap is picked up everywhere without touching render.py/app.py/menu.py.
 
 import chess
 
-SQUARE = 84
-BOARD_MARGIN = 24
+# --- supersampling -----------------------------------------------------------
+# The whole game frame is drawn at SCALE x the base layout resolution onto an
+# offscreen surface, then smooth-scaled to fit the window (see ui/present.py).
+# Downscaling a 2x render = free anti-aliasing (SSAA); upscaling for a big
+# monitor stays smooth instead of the old nearest-neighbour blockiness. Because
+# SCALE is a *static* constant (fixed at import, never changed at runtime), the
+# module-level copies skins capture at import time already see the scaled
+# values -- no runtime plumbing needed. All game geometry below is in scaled
+# pixels; the menu is authored at the base resolution (MENU_W/H) instead and
+# smooth-scaled the same way.
+SCALE = 2
+
+SQUARE = 84 * SCALE
+BOARD_MARGIN = 24 * SCALE
 BOARD_PIXELS = SQUARE * 8
-PANEL_WIDTH = 400
+PANEL_WIDTH = 400 * SCALE
 WINDOW_W = BOARD_MARGIN * 2 + BOARD_PIXELS + PANEL_WIDTH
 WINDOW_H = BOARD_MARGIN * 2 + BOARD_PIXELS
+
+# Base (unscaled) window size -- the pre-game / settings menu draws at this
+# resolution onto its own surface, presented the same way as the game frame.
+MENU_W = WINDOW_W // SCALE
+MENU_H = WINDOW_H // SCALE
+
+
+def px(n) -> int:
+    """Scale a base-resolution pixel literal (border widths, small offsets,
+    chip padding) into the supersampled render space. Geometry derived from
+    SQUARE already scales automatically; use this for the stray literals."""
+    return round(n * SCALE)
 
 GLYPH = {
     chess.PAWN: "♙",
@@ -26,7 +50,6 @@ GLYPH = {
     chess.KING: "♔",
 }
 
-THEMES = ("origin", "cyberpunk")
 DEFAULT_WHITE_COLOR = (240, 200, 90)
 DEFAULT_BLACK_COLOR = (90, 150, 230)
 
@@ -149,6 +172,11 @@ def _origin_palette(white_color, black_color):
         # the light side, a lightened wood-brown for the dark side.
         WHITE_LABEL=(245, 238, 220),
         BLACK_LABEL=(198, 150, 105),
+        # Vivid per-side colours the "neon" piece set tints its silhouettes
+        # with. On origin these are the (default gold / blue) team colours; on
+        # cyberpunk they're each player's chosen neon.
+        WHITE_NEON=_clamp(white_color),
+        BLACK_NEON=_clamp(black_color),
         AURA_PALETTE=[
             (231, 76, 60), (52, 152, 219), (46, 204, 113), (241, 196, 15),
             (155, 89, 182), (26, 188, 156), (230, 126, 34), (149, 165, 166),
@@ -203,6 +231,8 @@ def _cyberpunk_palette(white_color, black_color):
         # Team-name text colours = each side's own vivid neon accent.
         WHITE_LABEL=_clamp(white_color),
         BLACK_LABEL=_clamp(black_color),
+        WHITE_NEON=_clamp(white_color),
+        BLACK_NEON=_clamp(black_color),
         AURA_PALETTE=[
             (255, 46, 199), (0, 224, 255), (57, 255, 168), (255, 209, 0),
             (189, 0, 255), (0, 255, 209), (255, 111, 0), (150, 160, 190),
@@ -226,12 +256,20 @@ def team_label(color: bool):
     return WHITE_LABEL if color else BLACK_LABEL
 
 
+def team_neon(color: bool):
+    """The vivid per-side colour the neon piece set tints its silhouettes with
+    (see WHITE_NEON/BLACK_NEON). `color` is a python-chess colour bool."""
+    return WHITE_NEON if color else BLACK_NEON
+
+
 def apply_theme(name: str, white_color=None, black_color=None):
     """Swap the active palette in place. Call once after the menu closes
     (and again after loading a save, in case its theme/colours differ)."""
     builder = _BUILDERS.get(name, _origin_palette)
     palette = builder(white_color or DEFAULT_WHITE_COLOR, black_color or DEFAULT_BLACK_COLOR)
     globals().update(palette)
+    # Active theme name, read by render.draw_token to decide token styling.
+    globals()["THEME_NAME"] = name if name in _BUILDERS else "origin"
 
 
 apply_theme("origin")

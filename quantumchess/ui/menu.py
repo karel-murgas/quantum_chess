@@ -5,11 +5,12 @@ from __future__ import annotations
 import random
 from pathlib import Path
 
+import chess
 import pygame
 
 from ..config import CollapseMode, GameConfig
 from .. import persistence
-from . import theme
+from . import theme, pieces, render
 
 MAX_NAME_LEN = 16
 TEAMS_SAVE_PATH = Path("saves/teams.json")
@@ -32,6 +33,8 @@ class Menu:
         self.seed = random.SystemRandom().randrange(1_000_000)
 
         self.theme_name = "origin"
+        self.white_piece_set = "cburnett"
+        self.black_piece_set = "cburnett"
         self.white_name = "White"
         self.black_name = "Black"
         self.white_color = theme.DEFAULT_WHITE_COLOR
@@ -44,6 +47,8 @@ class Menu:
             self.mass_movement = initial_config.mass_movement
             self.seed = initial_config.seed
             self.theme_name = initial_config.theme
+            self.white_piece_set = initial_config.white_piece_set
+            self.black_piece_set = initial_config.black_piece_set
             self.white_name = initial_config.white_name
             self.black_name = initial_config.black_name
             self.white_color = initial_config.white_color
@@ -54,30 +59,39 @@ class Menu:
         self.font_title = pygame.font.SysFont("segoeui", 36, bold=True)
         self.font = pygame.font.SysFont("segoeui", 22)
         self.font_small = pygame.font.SysFont("segoeui", 17)
+        # Small symbol font for the "unicode" piece-set preview swatch.
+        self.font_glyph = pygame.font.SysFont("segoeuisymbol", 30)
 
         w, h = self.screen.get_size()
         cx = w // 2
-        self.collapse_full_rect = pygame.Rect(cx - 220, 150, 200, 44)
-        self.collapse_partial_rect = pygame.Rect(cx + 20, 150, 200, 44)
-        self.split_toggle_rect = pygame.Rect(cx - 220, 214, 200, 44)
-        self.mass_toggle_rect = pygame.Rect(cx + 20, 214, 200, 44)
+        self.collapse_full_rect = pygame.Rect(cx - 220, 112, 200, 40)
+        self.collapse_partial_rect = pygame.Rect(cx + 20, 112, 200, 40)
+        self.split_toggle_rect = pygame.Rect(cx - 220, 164, 200, 40)
+        self.mass_toggle_rect = pygame.Rect(cx + 20, 164, 200, 40)
 
         self.theme_rects = {
-            "origin": pygame.Rect(cx - 220, 296, 200, 44),
-            "cyberpunk": pygame.Rect(cx + 20, 296, 200, 44),
+            "origin": pygame.Rect(cx - 220, 232, 200, 40),
+            "cyberpunk": pygame.Rect(cx + 20, 232, 200, 40),
         }
 
-        self.white_name_rect = pygame.Rect(cx - 320, 374, 300, 36)
-        self.black_name_rect = pygame.Rect(cx + 20, 374, 300, 36)
-        self.swap_rect = pygame.Rect(cx - 20, 374, 40, 36)
+        # Piece-set picker, one row per team (each side chooses its own art):
+        # a team label on the left, then one button per set with a small king
+        # preview drawn in that team's colour.
+        self._piece_label_w = 64
+        self.white_piece_rects = self._piece_row_rects(cx, 300)
+        self.black_piece_rects = self._piece_row_rects(cx, 346)
+
+        self.white_name_rect = pygame.Rect(cx - 320, 412, 300, 34)
+        self.black_name_rect = pygame.Rect(cx + 20, 412, 300, 34)
+        self.swap_rect = pygame.Rect(cx - 20, 412, 40, 34)
 
         self.white_swatch_rects = self._swatch_rects(cx - 320)
         self.black_swatch_rects = self._swatch_rects(cx + 20)
 
         # One row: Save Teams | Reroll seed | Load Teams
-        self.team_save_rect = pygame.Rect(cx - 330, 566, 200, 40)
-        self.reroll_rect = pygame.Rect(cx - 100, 566, 200, 40)
-        self.team_load_rect = pygame.Rect(cx + 130, 566, 200, 40)
+        self.team_save_rect = pygame.Rect(cx - 330, 556, 200, 38)
+        self.reroll_rect = pygame.Rect(cx - 100, 556, 200, 38)
+        self.team_load_rect = pygame.Rect(cx + 130, 556, 200, 38)
         self.team_status = ""       # transient feedback for the last save/load
 
         # Mid-game, Start doubles as "New Game" (same rect, relabeled) and
@@ -85,21 +99,31 @@ class Menu:
         # out without resetting the board. Pre-game there's nothing to resume
         # to, so Start alone stays centered as it always has.
         if self.in_game:
-            self.resume_rect = pygame.Rect(cx - 210, 630, 200, 56)
-            self.start_rect = pygame.Rect(cx + 10, 630, 200, 56)
+            self.resume_rect = pygame.Rect(cx - 210, 632, 200, 50)
+            self.start_rect = pygame.Rect(cx + 10, 632, 200, 50)
         else:
             self.resume_rect = None
-            self.start_rect = pygame.Rect(cx - 100, 630, 200, 56)
+            self.start_rect = pygame.Rect(cx - 100, 632, 200, 50)
+
+    def _piece_row_rects(self, cx, y):
+        """One team's piece-set buttons: {set_key -> Rect}, laid out to the
+        right of a fixed-width team label."""
+        pw, pgap = 148, 8
+        n = len(pieces.PIECE_SETS)
+        grp_w = self._piece_label_w + 12 + n * pw + (n - 1) * pgap
+        bx = cx - grp_w // 2 + self._piece_label_w + 12
+        return {key: pygame.Rect(bx + i * (pw + pgap), y, pw, 40)
+                for i, (key, _label) in enumerate(pieces.PIECE_SETS)}
 
     @staticmethod
     def _swatch_rects(x0):
-        size, gap = 30, 6
+        size, gap = 26, 5
         rects = []
         for i, _ in enumerate(theme.SWATCHES):
             col = i % 4
             row = i // 4
             x = x0 + col * (size + gap)
-            y = 440 + row * (size + gap)
+            y = 474 + row * (size + gap)
             rects.append(pygame.Rect(x, y, size, size))
         return rects
 
@@ -109,6 +133,8 @@ class Menu:
                           mass_movement=self.mass_movement,
                           seed=self.seed,
                           theme=self.theme_name,
+                          white_piece_set=self.white_piece_set,
+                          black_piece_set=self.black_piece_set,
                           white_name=self.white_name.strip() or "White",
                           black_name=self.black_name.strip() or "Black",
                           white_color=self.white_color,
@@ -141,6 +167,16 @@ class Menu:
             self.theme_name = "origin"
         elif self.theme_rects["cyberpunk"].collidepoint(pos):
             self.theme_name = "cyberpunk"
+        elif any(r.collidepoint(pos) for r in self.white_piece_rects.values()):
+            for key, r in self.white_piece_rects.items():
+                if r.collidepoint(pos):
+                    self.white_piece_set = key
+                    break
+        elif any(r.collidepoint(pos) for r in self.black_piece_rects.values()):
+            for key, r in self.black_piece_rects.items():
+                if r.collidepoint(pos):
+                    self.black_piece_set = key
+                    break
         elif self.swap_rect.collidepoint(pos):
             self._swap_teams()
         elif self.reroll_rect.collidepoint(pos):
@@ -185,6 +221,8 @@ class Menu:
             persistence.save_teams(
                 TEAMS_SAVE_PATH,
                 theme=self.theme_name,
+                white_piece_set=self.white_piece_set,
+                black_piece_set=self.black_piece_set,
                 white_name=self.white_name.strip() or "White",
                 black_name=self.black_name.strip() or "Black",
                 white_color=self.white_color,
@@ -209,6 +247,8 @@ class Menu:
                 self.team_status = "No saved teams to load."
             return
         self.theme_name = data["theme"]
+        self.white_piece_set = data["white_piece_set"]
+        self.black_piece_set = data["black_piece_set"]
         self.white_name = data["white_name"]
         self.black_name = data["black_name"]
         self.white_color = data["white_color"]
@@ -225,6 +265,7 @@ class Menu:
         """
         self.white_name, self.black_name = self.black_name, self.white_name
         self.white_color, self.black_color = self.black_color, self.white_color
+        self.white_piece_set, self.black_piece_set = self.black_piece_set, self.white_piece_set
         self.active_field = None
 
     def _button(self, rect, label, active):
@@ -234,6 +275,39 @@ class Menu:
         text_color = (20, 20, 20) if active else theme.TEXT
         surf = self.font.render(label, True, text_color)
         self.screen.blit(surf, surf.get_rect(center=rect.center))
+
+    def _draw_piece_row(self, rects, selected, name, color):
+        """Draw one team's piece-set row: the team name label on the left, then
+        a button per set (preview drawn in that team's colour)."""
+        first = next(iter(rects.values()))
+        lab = self.font_small.render(name[:9], True, theme.team_label(color))
+        self.screen.blit(lab, (first.x - self._piece_label_w - 12,
+                               first.centery - lab.get_height() // 2))
+        for key, label in pieces.PIECE_SETS:
+            self._piece_set_button(rects[key], key, label, selected == key, color)
+
+    def _piece_set_button(self, rect, key, label, active, color):
+        """A piece-set option for one team: a small king preview of the set
+        (drawn in ``color``'s art) on the left, the set's name on the right,
+        highlighted when selected."""
+        bg = theme.ACCENT if active else theme.PANEL_BG
+        pygame.draw.rect(self.screen, bg, rect, border_radius=8)
+        border = theme.ACCENT if active else theme.TEXT_DIM
+        pygame.draw.rect(self.screen, border, rect, width=2 if not active else 3, border_radius=8)
+
+        icon_center = (rect.x + 26, rect.centery)
+        if key == "unicode":
+            ink = (20, 20, 20) if active else theme.TEXT
+            glyph = self.font_glyph.render(theme.GLYPH[chess.KING], True, ink)
+            self.screen.blit(glyph, glyph.get_rect(center=icon_center))
+        else:
+            glow = theme.team_neon(color) if key == "neon" else None
+            tok = pieces.render_token(key, chess.KING, color, 36, glow=glow)
+            self.screen.blit(tok, tok.get_rect(center=icon_center))
+
+        text_color = (20, 20, 20) if active else theme.TEXT
+        s = self.font_small.render(label, True, text_color)
+        self.screen.blit(s, (rect.x + 50, rect.centery - s.get_height() // 2))
 
     def _name_field(self, rect, text, active):
         pygame.draw.rect(self.screen, theme.PANEL_BG, rect, border_radius=6)
@@ -278,6 +352,15 @@ class Menu:
         self._button(self.theme_rects["origin"], "Origin", self.theme_name == "origin")
         self._button(self.theme_rects["cyberpunk"], "Cyberpunk", self.theme_name == "cyberpunk")
 
+        pieces_caption = self.font_small.render("Piece sets (each team picks its own):",
+                                                True, theme.TEXT_DIM)
+        white_first = next(iter(self.white_piece_rects.values()))
+        self.screen.blit(pieces_caption, pieces_caption.get_rect(center=(w // 2, white_first.y - 14)))
+        self._draw_piece_row(self.white_piece_rects, self.white_piece_set,
+                             self.white_name.strip() or "White", chess.WHITE)
+        self._draw_piece_row(self.black_piece_rects, self.black_piece_set,
+                             self.black_name.strip() or "Black", chess.BLACK)
+
         names_caption = self.font_small.render("Team names:", True, theme.TEXT_DIM)
         self.screen.blit(names_caption, names_caption.get_rect(center=(w // 2, self.white_name_rect.y - 16)))
         self._name_field(self.white_name_rect, self.white_name, self.active_field == "white_name")
@@ -287,7 +370,8 @@ class Menu:
         if self.theme_name == "cyberpunk":
             colors_caption = self.font_small.render(
                 "Team colours (used as accents against dark grays):", True, theme.TEXT_DIM)
-            self.screen.blit(colors_caption, colors_caption.get_rect(center=(w // 2, 424)))
+            self.screen.blit(colors_caption, colors_caption.get_rect(
+                center=(w // 2, self.white_swatch_rects[0].y - 16)))
             self._swatches(self.white_swatch_rects, self.white_color)
             self._swatches(self.black_swatch_rects, self.black_color)
 

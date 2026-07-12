@@ -165,7 +165,3 @@ def build_animation(before: list[Token],
         ))
 
     return beats
-
-
-def total_duration(beats: list[Beat]) -> int:
-    return sum(b.duration_ms for b in beats)
