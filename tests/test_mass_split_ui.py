@@ -3,7 +3,10 @@
 
 Focus: the per-ghost two-pick gesture (first branch -> optionally a second
 branch = split, or the first square again = plain single move), and that a
-confirmed plan reaches ``collapse.resolve_mass_split``.
+confirmed plan reaches ``collapse.resolve_mass_split``. The top-level
+Move/Split toggle picks which gesture the ghost you're aiming uses -- in Move
+mode a planned ghost only relocates (one click), so these tests toggle into
+Split mode before splitting one.
 """
 
 import os
@@ -55,8 +58,49 @@ def _split_app(mass_split=True):
 def test_can_mass_split_gate():
     on, _ = _split_app(mass_split=True)
     off, _ = _split_app(mass_split=False)
-    assert on.can_mass_split() and on._plan_cap() == 2
-    assert not off.can_mass_split() and off._plan_cap() == 1
+    assert on.can_mass_split() and not off.can_mass_split()
+    # the toggle is what arms the split gesture, and only when the dial is on
+    assert on._plan_cap() == 1 and not on.plan_splitting()   # move mode
+    on.toggle_mode()
+    assert on._plan_cap() == 2 and on.plan_splitting()       # split mode
+    off.toggle_mode()
+    assert off._plan_cap() == 1 and not off.plan_splitting()
+
+
+def test_move_mode_ghost_click_commits_a_single_move_not_a_split():
+    """Regression for a user report: in Move mode, aiming one ghost and then
+    clicking the *other* ghost split the first one into two branches instead of
+    selecting the second -- the two-pick split gesture was always armed, even
+    though the toggle said MOVE. Move mode must commit the first pick outright."""
+    app, rook = _split_app()
+    _click(app, chess.A1)          # enter planning (mode is "move")
+    _click(app, chess.A1)          # arm the a1 ghost
+    _click(app, chess.A4)          # its target -> committed, ghost deselected
+    assert app.plan[chess.A1] == (chess.A4,)
+    assert app.plan_pick_a is None and app.plan_active is None
+
+    _click(app, chess.H1)          # selects the other ghost -- does NOT split a1
+    assert app.plan_active == chess.H1
+    assert app.plan[chess.A1] == (chess.A4,)
+
+
+def test_toggling_mode_mid_plan_switches_the_gesture():
+    app, rook = _split_app()
+    _click(app, chess.A1)          # enter planning
+    _click(app, chess.A1)          # arm a1
+    app.toggle_mode()              # -> split mode; drops the half-made assignment
+    assert app.plan_active is None and app.is_planning()
+    _click(app, chess.A1)
+    _click(app, chess.A4)          # now the first pick of a split
+    assert app.plan_pick_a == chess.A4
+    _click(app, chess.A8)
+    assert app.plan[chess.A1] == (chess.A4, chess.A8)
+
+    app.toggle_mode()              # back to move mode
+    _click(app, chess.H1)
+    _click(app, chess.H4)          # single click commits again
+    assert app.plan[chess.H1] == (chess.H4,)
+    assert app.plan_active is None
 
 
 def test_reported_bug_toggling_split_mode_first_still_reaches_both_ghosts():
@@ -77,6 +121,7 @@ def test_reported_bug_toggling_split_mode_first_still_reaches_both_ghosts():
     _click(app, chess.A8)          # second branch -> a1 splits a4/a8
     assert app.plan[chess.A1] == (chess.A4, chess.A8)
 
+    app.toggle_mode()              # move mode for the second ghost
     _click(app, chess.H1)          # arm the h1 ghost too
     _click(app, chess.H4)          # move it
     assert app.plan[chess.H1] == (chess.H4,)
@@ -92,6 +137,7 @@ def test_reported_bug_toggling_split_mode_first_still_reaches_both_ghosts():
 def test_two_picks_split_a_ghost_into_two_branches():
     app, rook = _split_app()
     _click(app, chess.A1)          # enter planning
+    app.toggle_mode()              # split mode: aiming a ghost fans it out
     _click(app, chess.A1)          # active a1
     _click(app, chess.A4)          # first branch
     assert app.plan_pick_a == chess.A4
@@ -106,6 +152,7 @@ def test_two_picks_split_a_ghost_into_two_branches():
 def test_click_first_branch_again_makes_a_plain_move():
     app, rook = _split_app()
     _click(app, chess.A1)
+    app.toggle_mode()              # split mode
     _click(app, chess.A1)
     _click(app, chess.A4)          # first branch
     _click(app, chess.A4)          # same square again -> commit single move
@@ -117,6 +164,7 @@ def test_click_first_branch_again_makes_a_plain_move():
 def test_split_with_a_staying_branch():
     app, rook = _split_app()
     _click(app, chess.A1)
+    app.toggle_mode()              # split mode
     _click(app, chess.A1)
     _click(app, chess.A4)          # first branch: move
     _click(app, chess.A1)          # second branch: the source square (stay)
@@ -126,9 +174,11 @@ def test_split_with_a_staying_branch():
 def test_confirm_split_resolves_without_conflict():
     app, rook = _split_app()
     _click(app, chess.A1)
+    app.toggle_mode()              # split mode: a1 fans out
     _click(app, chess.A1)
     _click(app, chess.A4)
     _click(app, chess.A8)          # a1 splits a4 + a8
+    app.toggle_mode()              # back to move mode for the other ghost
     _click(app, chess.H1)
     _click(app, chess.H4)          # h1 relocates (single move)
     assert app.plan[chess.H1] == (chess.H4,)
@@ -145,6 +195,7 @@ def test_confirm_split_branch_capture_uses_rng():
     bishop = app.qb._add_piece(chess.BLACK, chess.BISHOP, chess.A4)
     app.rng = ScriptedRng(draws=[0.1])   # the a4 capture half (1/4) wins the roll
     _click(app, chess.A1)
+    app.toggle_mode()              # split mode
     _click(app, chess.A1)
     _click(app, chess.A4)          # branch 1: capture bishop
     _click(app, chess.B1)          # branch 2: safe
@@ -161,6 +212,7 @@ def test_confirm_split_branch_capture_uses_rng():
 def test_escape_backs_out_of_in_progress_split_then_cancels_plan():
     app, rook = _split_app()
     _click(app, chess.A1)
+    app.toggle_mode()              # split mode
     _click(app, chess.A1)
     _click(app, chess.A4)          # branch A chosen
     assert app.plan_pick_a == chess.A4
@@ -187,6 +239,7 @@ def test_split_promotion_branch_prompts_per_branch():
     app.rng = ScriptedRng(draws=[0.1])   # a8 branch (1/4) wins
 
     _click(app, chess.A7)          # enter planning
+    app.toggle_mode()              # split mode
     _click(app, chess.A7)          # active a7
     _click(app, chess.A8)          # branch 1 -> promotes, prompt
     assert app._pending_plan_promo == (chess.A7, chess.A8)

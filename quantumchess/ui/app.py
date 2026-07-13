@@ -138,10 +138,18 @@ class App:
         on -- each planned ghost may fan out into two branches, not just move."""
         return self.config.mass_movement and self.config.mass_split
 
+    def plan_splitting(self) -> bool:
+        """Whether the *active* ghost in a plan splits (two picks) or just moves
+        (one pick). The top-level Move/Split toggle decides, exactly like it does
+        for an ordinary single-ghost turn: in Move mode a planned ghost relocates
+        and the click commits immediately; in Split mode it fans into two
+        branches. (Only meaningful with the mass-split dial on.)"""
+        return self.can_mass_split() and self.mode == "split"
+
     def _plan_cap(self) -> int:
-        """How many destinations a single ghost may be assigned this turn:
-        2 (move or split) with mass split on, else 1 (move only)."""
-        return 2 if self.can_mass_split() else 1
+        """How many destinations the active ghost may be assigned: 2 in Split
+        mode with mass split on, else 1 (move only)."""
+        return 2 if self.plan_splitting() else 1
 
     def is_planning(self) -> bool:
         return self.plan is not None
@@ -149,11 +157,12 @@ class App:
     def _begin_plan(self, piece_id):
         """Enter mass-move/split planning for ``piece_id`` -- every ghost starts
         assigned to 'stay' (a one-element tuple of its own square); the player
-        then reassigns any of them (moving, or splitting when mass split is on)
-        and confirms. Planning can be entered from either Move or Split mode
-        (see ``handle_mouse_down``), but the top-level toggle has no meaning
-        once inside it -- reset to "move" so the panel's Mode button doesn't
-        keep showing a stale "SPLIT" label for the duration of the plan."""
+        then reassigns any of them and confirms. Planning can be entered from
+        either Move or Split mode (see ``handle_mouse_down``); the toggle keeps
+        its ordinary meaning *inside* the plan -- it says whether the ghost
+        you're aiming moves or splits (see ``plan_splitting``) -- and stays
+        switchable mid-plan. With mass split off it has no meaning here at all,
+        so reset it to "move" rather than show a stale "SPLIT" label."""
         self.plan = {g.square: (g.square,) for g in self.qb.ghosts_of(piece_id)}
         self.plan_active = None
         self.plan_piece = piece_id
@@ -162,7 +171,8 @@ class App:
         self._pending_plan_promo = None
         self.selected = None
         self.split_pick_a = None
-        self.mode = "move"
+        if not self.can_mass_split():
+            self.mode = "move"
 
     def cancel_plan(self):
         self.plan = None
@@ -344,7 +354,16 @@ class App:
     def toggle_mode(self):
         if not self.can_split():
             return
-        self.cancel_plan()            # leaving move mode abandons any mass-move plan
+        if self.is_planning():
+            if not self.can_mass_split():
+                self.cancel_plan()    # the toggle can't mean anything inside a
+                                      # move-only plan -- abandon it and go split
+                                      # a single ghost the ordinary way
+            else:
+                # inside a mass-split plan the toggle switches how the *next*
+                # ghost is aimed (move or split); drop any half-made assignment.
+                self.plan_pick_a = None
+                self.plan_active = None
         self.mode = "split" if self.mode == "move" else "move"
         self.split_pick_a = None
 

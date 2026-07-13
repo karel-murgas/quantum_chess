@@ -149,17 +149,18 @@ faced this turn, instead of forcing you to collapse it one contact at a time.
 *(Only available if you also turned **Mass split** on in the menu.)*
 
 With **Mass split** on, each ghost in a planning turn can not only move but
-**split into two**. The gesture mirrors ordinary split mode, one ghost at a
-time:
+**split into two**. The **Move/Split toggle** (the mode button, or `M`) says
+which one you're doing to the ghost you're aiming right now — you can flip it
+as often as you like *during* the plan, ghost by ghost:
 
-1. Click a ghost to pick it, then click its **first** target — a pick-ring
-   marks it.
-2. Now click a **second** target to **split** that ghost in half between the
-   two (each branch gets half of that ghost's probability). One of the two
-   branches may be the ghost's **own square**, if you want a branch to stay put.
-3. Or, to make it a plain single move instead, just click that **first target
-   again** (or click another ghost / Confirm) — no split.
-4. Clicking a ghost's **own square first** holds it in place, as before.
+- **Move mode** (the default): click a ghost, then click one target. Done — that
+  ghost is assigned and deselected, so your next click picks the next ghost.
+  Clicking a ghost's **own square** holds it in place.
+- **Split mode**: click a ghost, then click its **first** target — a pick-ring
+  marks it — then a **second** target to **split** that ghost in half between
+  the two (each branch gets half of that ghost's probability). One of the two
+  branches may be the ghost's **own square**, if you want a branch to stay put.
+  To back out into a plain single move, click that **first target again**.
 
 Everything else is identical to a mass move: all the resulting halves add up to
 1, and a single dice roll settles any conflicts across the whole (now larger)
@@ -241,7 +242,7 @@ new save overwrites the last one.
 | Toggle Move/Split mode | Click the mode button, or press `M` |
 | Split | In Split mode, click two destinations |
 | Mass move (if enabled) | Select a superposed piece → aim each ghost → Confirm (or `Enter`) |
-| Mass split (if enabled) | In a mass turn, click a ghost → two targets to split it (or one target = move) |
+| Mass split (if enabled) | In a mass turn, press `M` for Split mode, then click a ghost → its two targets (Move mode: one target = one move) |
 | Skip a collapse animation | Click anywhere |
 | Surrender | Click "Surrender" twice (arm, then confirm) |
 | New game after a win | Click "New Game", or press `N` |

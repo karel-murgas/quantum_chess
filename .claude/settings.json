@@ -22,7 +22,9 @@
       "Skill(run:*)",
       "Bash(python -m pytest tests/ -q --tb=short)",
       "Bash(python demo_fraction_visibility.py)",
-      "Bash(cd \"c:\\\\Users\\\\karel\\\\Documents\\\\Python\\\\Quantum chess\" && rm -f demo_fraction_visibility.py fraction_visibility_demo.png && git status)"
+      "Bash(cd \"c:\\\\Users\\\\karel\\\\Documents\\\\Python\\\\Quantum chess\" && rm -f demo_fraction_visibility.py fraction_visibility_demo.png && git status)",
+      "Bash(git push *)",
+      "Bash(git merge *)"
     ],
     "additionalDirectories": [
       "c:\\Users\\karel\\Documents\\Python\\Quantum chess"
