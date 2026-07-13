@@ -667,10 +667,15 @@ really was.
     `mode == "move"` to enter planning, so a player who switched to Split
     mode first, expecting that to be how you split *multiple* ghosts, instead
     fell through to an ordinary single-ghost split and lost the turn after
-    touching only one ghost). `_begin_plan` also resets `self.mode` to
-    `"move"` on entry, since the toggle has no meaning once inside planning
-    and would otherwise keep showing a stale "SPLIT" label on the panel.
-    `self.plan` maps every ghost's
+    touching only one ghost). *Entry* is mode-independent, but **inside** a
+    plan the toggle keeps its ordinary meaning: it says whether the ghost
+    you're currently aiming **moves** (one click, commits immediately) or
+    **splits** (the two-pick gesture) — see `App.plan_splitting`/`_plan_cap`
+    below — and it stays switchable mid-plan (`toggle_mode` drops any
+    half-made assignment but keeps the plan; with `mass_split` *off* the
+    toggle can't mean anything inside a plan, so it abandons the plan as
+    before and `_begin_plan` forces `mode = "move"` so the panel can't show a
+    stale "SPLIT" label). `self.plan` maps every ghost's
     source square → a **tuple** of its chosen destination(s) (all default to
     `(source,)` = "stay"; one square = relocate, or — only with the `mass_split`
     dial on — two distinct squares = that ghost splits in half),
@@ -684,8 +689,9 @@ really was.
     choice per branch, pruned via `_prune_promos` if that ghost is later
     re-aimed) so promotions are chosen, not auto-queened.
     **Mass split** (added 2026-07-13, `mass_split` dial layered on
-    `mass_movement`): `App.can_mass_split()`/`_plan_cap()` raise each ghost's
-    destination cap from 1 to 2. Splitting a ghost reuses the top-level
+    `mass_movement`): `App.plan_splitting()` (= `can_mass_split()` **and**
+    `mode == "split"`) / `_plan_cap()` raise the *active* ghost's destination
+    cap from 1 to 2. Splitting a ghost reuses the top-level
     split-mode two-pick gesture, per ghost: `self.plan_pick_a` holds the first
     branch chosen for the active ghost (like `split_pick_a`); clicking a
     *second* square commits a split into both (`plan[from] = (a, b)`), clicking
@@ -701,7 +707,8 @@ really was.
     by `result.chosen_from`+`chosen_to` so a split's sibling isn't confused for
     it — lands solid, losers fade; same `build_animation` path as a split's
     branches). Cancel (floating button /
-    `Escape`) or switching to split mode abandons the plan; the plan is
+    `Escape`) — or switching to split mode when `mass_split` is off — abandons
+    the plan; the plan is
     transient UI state (not persisted, cleared by `new_game`/`load_from`).
     Planning is skin-agnostic — drawn centrally in `BaseSkin.draw`'s
     `is_planning()` branch via `BaseSkin.draw_plan` + `render.draw_plan_rings`/
@@ -1182,6 +1189,25 @@ really was.
       `test_mass_split_ui.py` gained regression coverage entering planning
       from Split mode, including the exact two-ghost split-and-move sequence
       from the bug report).
+      Later 2026-07-14, the flip side of that fix was reported ("I'm in move
+      mode, but after queen ghost h6->h4 I wanted to move the other queen ghost
+      (f6) and it made the first ghost split instead of select the second
+      ghost"): inside planning the two-pick split gesture was armed purely by
+      the `mass_split` **dial**, ignoring the Move/Split **mode**, so the click
+      that aimed a ghost never committed — it sat waiting for a second branch,
+      and the next click (on the other ghost, if that square happened to be a
+      legal target of the first — which is why it looked side-dependent, it's
+      geometry not colour) was swallowed as branch B. Fixed by making the
+      toggle govern the gesture inside a plan exactly as it does outside one:
+      `App.plan_splitting()` = `can_mass_split() and mode == "split"`, so Move
+      mode commits a planned ghost's target on the first click and Split mode
+      fans it into two; `toggle_mode` now switches the gesture mid-plan
+      (dropping any half-made assignment) instead of cancelling the plan, and
+      `_begin_plan` preserves the mode when mass split is on. Planning hints in
+      `ui/skins/base.py` follow the mode ("[M] to split a ghost"). 210 tests
+      passing (`test_mass_split_ui.py` gained the move-mode-commits-single
+      regression + a toggle-mid-plan test; its split-gesture tests now toggle
+      into Split mode first).
 - [ ] **M5** — (menu dials already landed in M4; this milestone folds into it —
       remaining polish items only, e.g. richer dial explanations in-menu).
 - [ ] **M6** — polish pass (see below for what's left).

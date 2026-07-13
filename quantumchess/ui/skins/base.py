@@ -315,17 +315,18 @@ class BaseSkin:
         self.draw_pieces(surf, app)
         render.draw_plan_arrows(surf, app.plan, app.plan_piece, app.plan_pick_a)
         render.draw_mass_controls(surf, self.fonts)
-        split = app.can_mass_split()
-        noun = "Mass split" if split else "Mass move"
+        split = app.plan_splitting()
+        noun = "Mass split" if app.can_mass_split() else "Mass move"
         if app._pending_plan_promo is not None:
             return "Choose promotion for this branch: click a piece"
         if app.plan_active is None:
-            return f"{noun}: click a ghost to aim it, then Confirm"
+            hint = " ([M] to split a ghost)" if app.can_mass_split() and not split else ""
+            return f"{noun}: click a ghost to aim it, then Confirm{hint}"
         if split and app.plan_pick_a is not None:
             return "2nd square = split; the 1st square again = single move"
         if split:
-            return "Click a target (its square = hold), or two squares = split"
-        return "Mass move: click this ghost's target (or itself to hold)"
+            return "Split this ghost: click its two branches"
+        return "Move this ghost: click its target (or itself to hold)"
 
     # ------------------------------------------------------------- collapse
     def _draw_anim_token(self, surf, tok, center, alpha_mult=1.0):
