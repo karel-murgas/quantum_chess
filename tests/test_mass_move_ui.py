@@ -62,6 +62,23 @@ def test_dial_on_enters_planning_for_superposed_piece():
     assert app.selected is None
 
 
+def test_dial_on_enters_planning_even_while_in_split_mode():
+    """Regression: selecting a superposed piece must open mass-move planning
+    regardless of the top-level Move/Split toggle -- previously it only
+    triggered while `mode == "move"`, so a player who switched to Split mode
+    (a natural thing to try when they want to split ghosts) got dropped into
+    an ordinary one-ghost split instead of planning, and the turn ended after
+    touching only one ghost."""
+    app, rook = _mass_app(mass=True)
+    app.toggle_mode()
+    assert app.mode == "split"
+    _click(app, chess.A1)
+    assert app.is_planning()
+    assert app.plan_piece == rook.id
+    assert app.selected is None
+    assert app.mode == "move"   # the toggle is meaningless during planning; normalized back
+
+
 def test_solid_piece_not_planned_even_with_dial_on():
     app, rook = _mass_app(mass=True)
     _click(app, chess.E4)          # the (solid) king

@@ -658,9 +658,19 @@ really was.
     — resets the board with the edited dials, exactly like starting over from
     the pre-game menu.
     **Mass-move planning** (added 2026-07-11, `mass_movement` dial): when the
-    dial is on, clicking a *superposed* own piece in move mode opens planning
-    instead of a one-click move (a solid piece still moves in one click —
-    planning only makes sense for >1 ghost). `self.plan` maps every ghost's
+    dial is on, clicking a *superposed* own piece opens planning instead of an
+    ordinary one-click move/split (a solid piece still moves/splits the
+    ordinary way — planning only makes sense for >1 ghost). This is
+    independent of the top-level Move/Split toggle (fixed 2026-07-13 — user
+    report: "I turn on split, move one ghost and the turn ends, I didn't get
+    a chance to split the second ghost" — the original check required
+    `mode == "move"` to enter planning, so a player who switched to Split
+    mode first, expecting that to be how you split *multiple* ghosts, instead
+    fell through to an ordinary single-ghost split and lost the turn after
+    touching only one ghost). `_begin_plan` also resets `self.mode` to
+    `"move"` on entry, since the toggle has no meaning once inside planning
+    and would otherwise keep showing a stale "SPLIT" label on the panel.
+    `self.plan` maps every ghost's
     source square → a **tuple** of its chosen destination(s) (all default to
     `(source,)` = "stay"; one square = relocate, or — only with the `mass_split`
     dial on — two distinct squares = that ghost splits in half),
@@ -826,7 +836,7 @@ really was.
 - Demo (M1 random game): `python demo_m1.py [seed]`
 - Demo (M2 superposition): `python demo_m2.py`
 - Demo (M3 collapse): `python demo_m3.py [seed]` — try seeds 1-5, each gives a different outcome
-- Tests: `python -m pytest -q`  (206 passing). UI tests need `SDL_VIDEODRIVER=dummy` in
+- Tests: `python -m pytest -q`  (208 passing). UI tests need `SDL_VIDEODRIVER=dummy` in
   the environment (set automatically at the top of `test_m4_ui.py`, but harmless to
   also export it yourself: `SDL_VIDEODRIVER=dummy python -m pytest -q`).
 - `HOW_TO_PLAY.md` (repo root) — player-facing rules/controls guide for the user and their friend.
@@ -1154,6 +1164,24 @@ really was.
       remember-on-start/resume coverage — two pre-existing settings tests
       needed `monkeypatch.chdir(tmp_path)` added since Resume/New-Game now
       also touch disk).
+      Later the same day, a playtest bug report ("I turn on split, move one
+      ghost and the turn ends, I didn't get a chance to split the second
+      ghost") turned up a real interaction bug in mass-move/mass-split
+      planning: entering planning (`app.py::handle_mouse_down`) required
+      `self.mode == "move"`, so a player who toggled to Split mode *first*
+      (a natural thing to try when you specifically want to split multiple
+      ghosts) had their click fall through to an ordinary one-ghost split
+      instead — which, per the "a turn = one action on one ghost" rule, ends
+      the turn immediately, before the other ghost(s) can be touched at all.
+      Fixed by dropping the mode check entirely: selecting a superposed piece
+      always opens planning when the mass-movement dial is on, regardless of
+      which mode was active; `_begin_plan` now also resets `self.mode` back to
+      `"move"` so the panel's Mode button doesn't keep showing a stale
+      "SPLIT" label for the duration of the plan (mode has no meaning once
+      inside it). 208 tests passing (`test_mass_move_ui.py`/
+      `test_mass_split_ui.py` gained regression coverage entering planning
+      from Split mode, including the exact two-ghost split-and-move sequence
+      from the bug report).
 - [ ] **M5** — (menu dials already landed in M4; this milestone folds into it —
       remaining polish items only, e.g. richer dial explanations in-menu).
 - [ ] **M6** — polish pass (see below for what's left).

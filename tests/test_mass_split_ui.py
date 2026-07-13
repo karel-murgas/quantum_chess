@@ -59,6 +59,36 @@ def test_can_mass_split_gate():
     assert not off.can_mass_split() and off._plan_cap() == 1
 
 
+def test_reported_bug_toggling_split_mode_first_still_reaches_both_ghosts():
+    """Regression for a user report: with Mass split on, toggling the
+    top-level Move/Split control to "Split" before selecting the superposed
+    piece used to fall through to an ordinary one-ghost split -- ending the
+    turn after touching only one ghost, with no chance to act on the second.
+    Selecting the piece must open planning (and let both ghosts be assigned)
+    no matter which mode was active when it was clicked."""
+    app, rook = _split_app()
+    app.toggle_mode()
+    assert app.mode == "split"
+    _click(app, chess.A1)          # select the superposed rook
+    assert app.is_planning()       # not an ordinary single-ghost split
+
+    _click(app, chess.A1)          # arm the a1 ghost
+    _click(app, chess.A4)          # first branch
+    _click(app, chess.A8)          # second branch -> a1 splits a4/a8
+    assert app.plan[chess.A1] == (chess.A4, chess.A8)
+
+    _click(app, chess.H1)          # arm the h1 ghost too
+    _click(app, chess.H4)          # move it
+    assert app.plan[chess.H1] == (chess.H4,)
+
+    _click_rect(app, render.mass_controls_rects()["confirm"])
+    assert not app.is_planning()
+    assert app.qb.turn == chess.BLACK
+    squares = {g.square: g.prob for g in app.qb.ghosts_of(rook.id)}
+    assert squares == {chess.A4: Fraction(1, 4), chess.A8: Fraction(1, 4),
+                       chess.H4: Fraction(1, 2)}
+
+
 def test_two_picks_split_a_ghost_into_two_branches():
     app, rook = _split_app()
     _click(app, chess.A1)          # enter planning

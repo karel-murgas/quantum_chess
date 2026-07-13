@@ -150,7 +150,10 @@ class App:
         """Enter mass-move/split planning for ``piece_id`` -- every ghost starts
         assigned to 'stay' (a one-element tuple of its own square); the player
         then reassigns any of them (moving, or splitting when mass split is on)
-        and confirms."""
+        and confirms. Planning can be entered from either Move or Split mode
+        (see ``handle_mouse_down``), but the top-level toggle has no meaning
+        once inside it -- reset to "move" so the panel's Mode button doesn't
+        keep showing a stale "SPLIT" label for the duration of the plan."""
         self.plan = {g.square: (g.square,) for g in self.qb.ghosts_of(piece_id)}
         self.plan_active = None
         self.plan_piece = piece_id
@@ -159,6 +162,7 @@ class App:
         self._pending_plan_promo = None
         self.selected = None
         self.split_pick_a = None
+        self.mode = "move"
 
     def cancel_plan(self):
         self.plan = None
@@ -580,11 +584,17 @@ class App:
         if self.selected is None:
             g = self._own_ghost_at(square)
             if g is not None:
-                # With the mass-movement dial on, selecting a *superposed* piece
-                # opens planning instead of a single-ghost move; a solid piece
-                # (one ghost) still moves in the ordinary one-click way.
-                if self.mode == "move" and self.can_mass() \
-                        and len(self.qb.ghosts_of(g.piece_id)) > 1:
+                # With the mass-movement dial on, selecting a *superposed*
+                # piece always opens planning instead of an ordinary
+                # single-ghost move/split -- regardless of the Move/Split mode
+                # toggle. Planning itself lets you choose move *or* (with mass
+                # split on) split per ghost, so the top-level mode toggle would
+                # otherwise just steal the click into an ordinary one-ghost
+                # split and end the turn before the other ghosts are ever
+                # touched. A solid piece (one ghost) is unaffected -- it still
+                # moves/splits the ordinary one-click/two-click way, honoring
+                # whichever mode is active.
+                if self.can_mass() and len(self.qb.ghosts_of(g.piece_id)) > 1:
                     self._begin_plan(g.piece_id)
                 else:
                     self.selected = square
