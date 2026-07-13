@@ -30,6 +30,7 @@ class Menu:
         self.collapse_mode = CollapseMode.FULL
         self.splitting_enabled = True
         self.mass_movement = False
+        self.mass_split = False
         self.seed = random.SystemRandom().randrange(1_000_000)
 
         self.theme_name = "origin"
@@ -45,6 +46,7 @@ class Menu:
             self.collapse_mode = initial_config.collapse_mode
             self.splitting_enabled = initial_config.splitting_enabled
             self.mass_movement = initial_config.mass_movement
+            self.mass_split = initial_config.mass_split
             self.seed = initial_config.seed
             self.theme_name = initial_config.theme
             self.white_piece_set = initial_config.white_piece_set
@@ -66,8 +68,12 @@ class Menu:
         cx = w // 2
         self.collapse_full_rect = pygame.Rect(cx - 220, 112, 200, 40)
         self.collapse_partial_rect = pygame.Rect(cx + 20, 112, 200, 40)
-        self.split_toggle_rect = pygame.Rect(cx - 220, 164, 200, 40)
-        self.mass_toggle_rect = pygame.Rect(cx + 20, 164, 200, 40)
+        # Three action-dial toggles on one row. "Mass split" is only meaningful
+        # with "Mass moves" on, so it's shown disabled (and ignores clicks)
+        # until then.
+        self.split_toggle_rect = pygame.Rect(cx - 235, 164, 150, 40)
+        self.mass_toggle_rect = pygame.Rect(cx - 75, 164, 150, 40)
+        self.mass_split_toggle_rect = pygame.Rect(cx + 85, 164, 150, 40)
 
         self.theme_rects = {
             "origin": pygame.Rect(cx - 220, 232, 200, 40),
@@ -131,6 +137,8 @@ class Menu:
         return GameConfig(collapse_mode=self.collapse_mode,
                           splitting_enabled=self.splitting_enabled,
                           mass_movement=self.mass_movement,
+                          # mass split only makes sense with mass movement on.
+                          mass_split=self.mass_split and self.mass_movement,
                           seed=self.seed,
                           theme=self.theme_name,
                           white_piece_set=self.white_piece_set,
@@ -163,6 +171,11 @@ class Menu:
             self.splitting_enabled = not self.splitting_enabled
         elif self.mass_toggle_rect.collidepoint(pos):
             self.mass_movement = not self.mass_movement
+            if not self.mass_movement:
+                self.mass_split = False   # can't mass-split without mass movement
+        elif self.mass_split_toggle_rect.collidepoint(pos):
+            if self.mass_movement:        # ignored while disabled
+                self.mass_split = not self.mass_split
         elif self.theme_rects["origin"].collidepoint(pos):
             self.theme_name = "origin"
         elif self.theme_rects["cyberpunk"].collidepoint(pos):
@@ -268,12 +281,17 @@ class Menu:
         self.white_piece_set, self.black_piece_set = self.black_piece_set, self.white_piece_set
         self.active_field = None
 
-    def _button(self, rect, label, active):
-        color = theme.ACCENT if active else theme.PANEL_BG
+    def _button(self, rect, label, active, enabled=True, font=None):
+        font = font or self.font
+        if not enabled:
+            color, text_color = theme.PANEL_BG, theme.TEXT_DIM
+        elif active:
+            color, text_color = theme.ACCENT, (20, 20, 20)
+        else:
+            color, text_color = theme.PANEL_BG, theme.TEXT
         pygame.draw.rect(self.screen, color, rect, border_radius=8)
         pygame.draw.rect(self.screen, theme.TEXT_DIM, rect, width=2, border_radius=8)
-        text_color = (20, 20, 20) if active else theme.TEXT
-        surf = self.font.render(label, True, text_color)
+        surf = font.render(label, True, text_color)
         self.screen.blit(surf, surf.get_rect(center=rect.center))
 
     def _draw_piece_row(self, rects, selected, name, color):
@@ -342,10 +360,14 @@ class Menu:
 
         self._button(self.split_toggle_rect,
                     f"Splitting: {'On' if self.splitting_enabled else 'Off'}",
-                    self.splitting_enabled)
+                    self.splitting_enabled, font=self.font_small)
         self._button(self.mass_toggle_rect,
                     f"Mass moves: {'On' if self.mass_movement else 'Off'}",
-                    self.mass_movement)
+                    self.mass_movement, font=self.font_small)
+        self._button(self.mass_split_toggle_rect,
+                    f"Mass split: {'On' if (self.mass_split and self.mass_movement) else 'Off'}",
+                    self.mass_split and self.mass_movement,
+                    enabled=self.mass_movement, font=self.font_small)
 
         theme_caption = self.font_small.render("Board theme:", True, theme.TEXT_DIM)
         self.screen.blit(theme_caption, theme_caption.get_rect(center=(w // 2, self.theme_rects["origin"].y - 18)))

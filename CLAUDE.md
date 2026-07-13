@@ -47,10 +47,12 @@ really was.
   never superposed by this: it always makes one plain, deterministic
   relocation alongside whichever branch reaches the castle square, exactly
   mirroring a full-move castle's "rook follows only if the walk completes."
-- Deferred dials (documented, not yet built): all-ghosts *split*, symmetric
-  all-ghosts move, equal-`1/n` probabilities, exotic promotion/en-passant
-  interactions. (The **independent** all-ghosts *move* variant shipped
-  2026-07-11 as the `mass_movement` dial — see `resolve_mass_move`.)
+- Deferred dials (documented, not yet built): symmetric all-ghosts move,
+  equal-`1/n` probabilities, exotic promotion/en-passant interactions. (The
+  **independent** all-ghosts *move* variant shipped 2026-07-11 as the
+  `mass_movement` dial — see `resolve_mass_move`. The **all-ghosts split**
+  variant shipped 2026-07-13 as the `mass_split` dial layered on top of it —
+  each ghost in a mass turn may move *or* split; see `resolve_mass_split`.)
 
 ## Architecture
 - **Engine is headless** — `quantumchess/` must not import `pygame`. UI is a thin
@@ -83,6 +85,17 @@ really was.
   candidates — the player picks it per leg in the UI (same promotion picker as a
   single move), defaulting to a queen only if unspecified. Resolution lives in
   `collapse.resolve_mass_move`.
+  **Mass split** (added 2026-07-13): `MassSplit(piece_id, legs, promotions)` is
+  the strict generalization of `MassMove` for the `mass_split` dial — `legs` is
+  one `(from_square, destinations)` per current ghost where `destinations` is a
+  tuple of **one** square (that ghost relocates, `to == from` = stay, exactly a
+  `MassMove` leg) or **two distinct** squares (that ghost *splits* into two
+  `p/2` halves). `promotions` here is keyed by both squares
+  (`(from_square, to_square, ptype)` triples) since a single ghost can split
+  into two promoting destinations that each need their own pick. Each leg still
+  goes through `mass_assignment_move` for classification. Resolution lives in
+  `collapse.resolve_mass_split`, which reuses the same single-measurement core
+  as a mass move (a split just contributes extra half-probability legs).
   **Castling** (added 2026-07-11, user asked "should I be able to castle here?"
   after a playtest reached a position where it should be legal): `Move` gained
   `castle_rook: Optional[tuple[rook_piece_id, rook_from, rook_to]]`, set only on
@@ -148,7 +161,11 @@ really was.
   `game.py` for convenience. Carries `mass_movement: bool = False` (added
   2026-07-11) — the optional dial enabling whole-superposition moves; enforced
   at the UI layer (`App.can_mass`) like `splitting_enabled`, since the engine's
-  `resolve_mass_move` is dial-agnostic. Also carries the cosmetic (non-logic) match-setup
+  `resolve_mass_move` is dial-agnostic. Carries `mass_split: bool = False`
+  (added 2026-07-13) — the optional dial (only meaningful with `mass_movement`
+  on) letting each ghost in a mass turn *split* as well as move; likewise
+  enforced at the UI layer (`App.can_mass_split`), with `resolve_mass_split`
+  dial-agnostic. Also carries the cosmetic (non-logic) match-setup
   fields: `theme` ("origin"/"cyberpunk"), `white_name`/`black_name`,
   `white_color`/`black_color` (RGB tuples, only meaningful for cyberpunk), plus
   `team_name(color)`/`team_color(color)` helpers keyed off the python-chess
@@ -248,6 +265,24 @@ really was.
   real square while the losers fade). Provably reduces to today's single move
   (move one ghost, hold the rest) in both modes: `P(solid at s) = p_s` either
   way. Headless; covered by `tests/test_mass_move.py`.
+  `resolve_mass_split` (added 2026-07-13, for the `mass_split` dial — user:
+  "if mass move is on ... a toggle to turn on/off mass split too — when on, I
+  can split multiple ghosts, each ghost has an option to move or split") is the
+  generalization: a ghost with a single-destination leg relocates exactly like
+  a mass-move leg, a two-destination leg splits that ghost's probability in half
+  across the two. The `resolve_mass_move` internals were refactored into
+  `_classify_mass_entry` (one leg → a classified `_MassEntry`) + a shared
+  `_resolve_mass_entries` core (roll among the entries, whose probs sum to 1;
+  the exact same no-conflict / safe-dodge (PARTIAL/FULL) / conflict-win
+  branches). `resolve_mass_move` builds one entry per assignment; `resolve_mass_split`
+  builds one **or two** (half-prob each) per leg — so a mass split whose every
+  leg is single is byte-for-byte a mass move (asserted in
+  `tests/test_mass_split.py`). `MassMoveResolution` gained `chosen_to` (the
+  winning leg's *intended* destination, = `final_square` unless a CONTACT slide
+  stopped short) so the UI can tell the winning branch apart from a *sibling*
+  branch of the same source ghost when a split sent one source to two squares.
+  Same single-measurement guarantee — `P(solid at s) = mass at s` — so it too
+  reduces to today's single move. Headless; covered by `tests/test_mass_split.py`.
 - `check.py` — **advisory** check-probability overlay (added 2026-07-11, user
   asked for an interface to "signal check and partial check, like 3/8 to be a
   check" plus a warning before a move exposes their own king). Purely
@@ -614,21 +649,36 @@ really was.
     dial is on, clicking a *superposed* own piece in move mode opens planning
     instead of a one-click move (a solid piece still moves in one click —
     planning only makes sense for >1 ghost). `self.plan` maps every ghost's
-    source square → its chosen destination (all default to "stay"),
+    source square → a **tuple** of its chosen destination(s) (all default to
+    `(source,)` = "stay"; one square = relocate, or — only with the `mass_split`
+    dial on — two distinct squares = that ghost splits in half),
     `self.plan_active` is the ghost being aimed, `self.plan_piece` the piece.
     `_handle_plan_click` cycles select-ghost → pick-target (or click the ghost
     again to hold); `plan_legal()` gives the active ghost's targets in the
     skin's own highlight style (a `CAPTURE_SOLID` is tagged risky, like split,
     since a mass leg's mover isn't guaranteed present). Aiming a ghost *pawn* at
     the promotion rank pops the ordinary promotion picker (`_pending_plan_promo`
-    holds the leg until a piece is clicked; `plan_promo[from]` records the
-    choice, cleared if that ghost is later re-aimed) so promotions are chosen,
-    not auto-queened. Confirm (a floating
-    `render.mass_controls_rects()` button over the board, or `Enter`) →
-    `_confirm_plan` builds the `MassMove`, calls `collapse.resolve_mass_move`,
-    logs it (`theme.TERMS['mass_verb']`/`'mass_collapse_clause'`), and animates
-    every moving ghost sliding out (winner lands solid, losers fade — same
-    `build_animation` path as a split's branches). Cancel (floating button /
+    holds the leg until a piece is clicked; `plan_promo[(from, to)]` records the
+    choice per branch, pruned via `_prune_promos` if that ghost is later
+    re-aimed) so promotions are chosen, not auto-queened.
+    **Mass split** (added 2026-07-13, `mass_split` dial layered on
+    `mass_movement`): `App.can_mass_split()`/`_plan_cap()` raise each ghost's
+    destination cap from 1 to 2. Splitting a ghost reuses the top-level
+    split-mode two-pick gesture, per ghost: `self.plan_pick_a` holds the first
+    branch chosen for the active ghost (like `split_pick_a`); clicking a
+    *second* square commits a split into both (`plan[from] = (a, b)`), clicking
+    the *first square again* commits a plain single move, and clicking the
+    ghost's own square first still holds it. `_commit_plan_branch` centralizes
+    "record this branch" for both first/second and cap-1/cap-2. Escape backs out
+    the in-progress ghost assignment first, then the whole plan. Confirm (a
+    floating `render.mass_controls_rects()` button over the board, or `Enter`) →
+    `_confirm_plan` builds a `MassMove` (every leg single, `resolve_mass_move`)
+    or a `MassSplit` (`resolve_mass_split`, when the dial is on), logs it
+    (`theme.TERMS['mass_verb']`/`'mass_split_verb'`/`'mass_collapse_clause'`),
+    and animates every moving branch sliding out (the winning branch — matched
+    by `result.chosen_from`+`chosen_to` so a split's sibling isn't confused for
+    it — lands solid, losers fade; same `build_animation` path as a split's
+    branches). Cancel (floating button /
     `Escape`) or switching to split mode abandons the plan; the plan is
     transient UI state (not persisted, cleared by `new_game`/`load_from`).
     Planning is skin-agnostic — drawn centrally in `BaseSkin.draw`'s
@@ -659,10 +709,16 @@ really was.
     (confirm-then-fire, ported from the retired classic path so removing it
     didn't silently drop the feature) in the same pass.
   - `menu.py` — pre-game dial picker (collapse mode, splitting on/off, mass
-    moves on/off, seed, board theme, team names, team colours). The "Mass
-    moves" toggle (`mass_toggle_rect`, beside "Splitting", added 2026-07-11)
+    moves on/off, mass split on/off, seed, board theme, team names, team
+    colours). The "Mass moves" toggle (`mass_toggle_rect`, beside "Splitting",
+    added 2026-07-11)
     feeds `GameConfig.mass_movement` through `_build_config`/`initial_config`
-    the same way splitting does. `splitting_enabled` is enforced at
+    the same way splitting does. The "Mass split" toggle
+    (`mass_split_toggle_rect`, third on the same row, added 2026-07-13) feeds
+    `GameConfig.mass_split` the same way, but is **only meaningful with mass
+    moves on**: it's drawn disabled (dim, via `_button`'s new `enabled` arg) and
+    ignores clicks until then, `_build_config` `and`s it with `mass_movement`,
+    and turning mass moves *off* clears it. `splitting_enabled` is enforced at
     this UI layer (`App.toggle_mode`), not inside the engine — the engine's
     split functions are dial-agnostic by design. Team-name fields are simple
     click-to-focus text inputs (`Menu.active_field` + `handle_keydown`, wired
@@ -736,7 +792,7 @@ really was.
 - Demo (M1 random game): `python demo_m1.py [seed]`
 - Demo (M2 superposition): `python demo_m2.py`
 - Demo (M3 collapse): `python demo_m3.py [seed]` — try seeds 1-5, each gives a different outcome
-- Tests: `python -m pytest -q`  (173 passing). UI tests need `SDL_VIDEODRIVER=dummy` in
+- Tests: `python -m pytest -q`  (194 passing). UI tests need `SDL_VIDEODRIVER=dummy` in
   the environment (set automatically at the top of `test_m4_ui.py`, but harmless to
   also export it yourself: `SDL_VIDEODRIVER=dummy python -m pytest -q`).
 - `HOW_TO_PLAY.md` (repo root) — player-facing rules/controls guide for the user and their friend.
@@ -1023,6 +1079,26 @@ really was.
       unknown-set fallback, SVG rasterization, neon recolour to the side colour,
       shadow/glow padding, and revision-keyed caching; `test_persistence.py`
       gained `piece_set` round-trip + old-file-fallback coverage).
+      Later **2026-07-13**, the **mass split** dial landed (user: "if mass move
+      is on, I would like a toggle to turn on/off mass split too — when on, I
+      can split multiple ghosts, each ghost has an option to move or split") —
+      see `config.py`/`rules.py` (`MassSplit`)/`collapse.py`
+      (`resolve_mass_split`, sharing a refactored `_resolve_mass_entries` core
+      with mass move)/`menu.py` (a third "Mass split" toggle, gated on mass
+      moves)/`app.py` (planning `self.plan` values became destination tuples;
+      the per-ghost two-pick split gesture via `self.plan_pick_a`, mirroring
+      top-level split mode) writeups above for the full mechanism. It's the
+      strict generalization of mass movement — a mass-split turn with no actual
+      splits resolves byte-for-byte like a mass move — and obeys the same
+      single-measurement / collapse-mode semantics. 194 tests passing
+      (`tests/test_mass_split.py` covers the engine — single-leg equivalence to
+      mass move, a ghost fanning into two halves, merge-by-destination, a split
+      branch capturing/dodging under PARTIAL/FULL, promotion, king capture, and
+      validation; `tests/test_mass_split_ui.py` drives the two-pick split
+      gesture, single-vs-split commit, staying branches, per-branch promotion,
+      and Escape back-out headlessly; `test_persistence.py` gained `mass_split`
+      round-trip). The floating Confirm/Cancel controls overlap the board's
+      bottom-rank squares (a pre-existing mass-move quirk, unchanged).
 - [ ] **M5** — (menu dials already landed in M4; this milestone folds into it —
       remaining polish items only, e.g. richer dial explanations in-menu).
 - [ ] **M6** — polish pass (see below for what's left).

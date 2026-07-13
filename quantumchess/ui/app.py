@@ -15,11 +15,11 @@ import chess
 import pygame
 
 from .. import check, rules
-from ..collapse import resolve_mass_move, resolve_move, resolve_split
+from ..collapse import resolve_mass_move, resolve_mass_split, resolve_move, resolve_split
 from ..config import GameConfig
 from ..model import QuantumBoard
 from ..persistence import load_game, save_game
-from ..rules import MassMove, MoveKind, Split
+from ..rules import MassMove, MassSplit, MoveKind, Split
 from . import render, theme, present, pieces
 from .animation import Token, build_animation
 from .menu import Menu
@@ -44,15 +44,21 @@ class App:
         self.mode = "move"            # "move" | "split"
         self.selected = None          # square with a selected ghost
         self.split_pick_a = None      # first chosen split destination
-        # Mass-move planning (the "mass movement" dial): while planning, `plan`
-        # maps every ghost's source square -> its chosen destination (defaults
-        # to "stay" = source), `plan_active` is the ghost currently being
-        # assigned, and `plan_piece` is the piece being planned. See
-        # collapse.resolve_mass_move.
-        self.plan = None              # dict[from_sq -> to_sq] | None
+        # Mass-move / mass-split planning (the "mass movement" dial, and the
+        # "mass split" dial layered on it): while planning, `plan` maps every
+        # ghost's source square -> a tuple of its chosen destination(s) --
+        # one square (relocate; `(from,)` means "stay") or, only when mass
+        # split is enabled, two distinct squares (that ghost splits in half).
+        # `plan_active` is the ghost currently being assigned, `plan_piece` the
+        # piece being planned, and `plan_pick_a` (mass split only) is the first
+        # branch chosen while a split is being built for `plan_active` -- the
+        # same two-pick gesture as the top-level split mode's `split_pick_a`.
+        # See collapse.resolve_mass_move / resolve_mass_split.
+        self.plan = None              # dict[from_sq -> tuple[to_sq, ...]] | None
         self.plan_active = None       # from_sq of the ghost being assigned
         self.plan_piece = None        # piece_id being planned
-        self.plan_promo = {}          # {from_sq -> promotion ptype} for promoting legs
+        self.plan_pick_a = None       # first split branch chosen for plan_active
+        self.plan_promo = {}          # {(from_sq, to_sq) -> promotion ptype} per promoting branch
         self._pending_plan_promo = None  # (from_sq, to_sq) awaiting a promotion pick
         self._pending_promotion = None  # (from_sq, to_sq, [candidate Moves]) | None
         self._confirm_surrender = False  # armed by one Surrender click, fired by the next
@@ -127,16 +133,28 @@ class App:
     def can_mass(self) -> bool:
         return self.config.mass_movement
 
+    def can_mass_split(self) -> bool:
+        """Mass split is the mass-movement dial with per-ghost splitting turned
+        on -- each planned ghost may fan out into two branches, not just move."""
+        return self.config.mass_movement and self.config.mass_split
+
+    def _plan_cap(self) -> int:
+        """How many destinations a single ghost may be assigned this turn:
+        2 (move or split) with mass split on, else 1 (move only)."""
+        return 2 if self.can_mass_split() else 1
+
     def is_planning(self) -> bool:
         return self.plan is not None
 
     def _begin_plan(self, piece_id):
-        """Enter mass-move planning for ``piece_id`` -- every ghost starts
-        assigned to 'stay' (its own square); the player then reassigns any of
-        them and confirms."""
-        self.plan = {g.square: g.square for g in self.qb.ghosts_of(piece_id)}
+        """Enter mass-move/split planning for ``piece_id`` -- every ghost starts
+        assigned to 'stay' (a one-element tuple of its own square); the player
+        then reassigns any of them (moving, or splitting when mass split is on)
+        and confirms."""
+        self.plan = {g.square: (g.square,) for g in self.qb.ghosts_of(piece_id)}
         self.plan_active = None
         self.plan_piece = piece_id
+        self.plan_pick_a = None
         self.plan_promo = {}
         self._pending_plan_promo = None
         self.selected = None
@@ -146,14 +164,40 @@ class App:
         self.plan = None
         self.plan_active = None
         self.plan_piece = None
+        self.plan_pick_a = None
         self.plan_promo = {}
         self._pending_plan_promo = None
 
     def _is_promo_leg(self, from_sq, to_sq) -> bool:
         """True if aiming the ghost on ``from_sq`` at ``to_sq`` is a promoting
-        pawn push (so the player must pick a promotion piece for this leg)."""
+        pawn push (so the player must pick a promotion piece for this branch)."""
         return any(m.to_square == to_sq and m.promotion is not None
                    for m in rules.ghost_destinations(self.qb, from_sq))
+
+    def _prune_promos(self, from_sq):
+        """Drop any recorded promotion for ``from_sq`` whose target is no longer
+        one of that ghost's planned destinations (e.g. after re-aiming it)."""
+        dests = self.plan.get(from_sq, ())
+        self.plan_promo = {k: v for k, v in self.plan_promo.items()
+                           if k[0] != from_sq or k[1] in dests}
+
+    def _commit_plan_branch(self, from_sq, to_sq):
+        """Record ``to_sq`` as a destination for the active ghost. With mass
+        split on this is the first branch (stay active so a second may be added,
+        turning the leg into a split) or the second (completing the split);
+        without it, it's the single move and the ghost is deselected."""
+        if self._plan_cap() == 1 or self.plan_pick_a is None:
+            self.plan[from_sq] = (to_sq,)            # single move / first branch
+            self._prune_promos(from_sq)
+            if self._plan_cap() == 1:
+                self.plan_active = None
+            else:
+                self.plan_pick_a = to_sq             # keep aiming for a 2nd branch
+        else:
+            self.plan[from_sq] = (self.plan_pick_a, to_sq)   # split into both
+            self._prune_promos(from_sq)
+            self.plan_pick_a = None
+            self.plan_active = None
 
     def plan_legal(self):
         """dict[to_square -> 'move'|'merge'|'contact'] for the ghost currently
@@ -170,34 +214,52 @@ class App:
         return by_square
 
     def _handle_plan_click(self, square):
-        if self.plan_active is not None:
-            active = self.plan_active
-            if square == active:
-                self.plan[active] = active        # revert to "stay"
-                self.plan_promo.pop(active, None)
-                self.plan_active = None
-                return
-            if square in self.plan_legal():
-                if self._is_promo_leg(active, square):
-                    # defer the assignment until the player picks a promotion
-                    self._pending_plan_promo = (active, square)
-                else:
-                    self.plan[active] = square
-                    self.plan_promo.pop(active, None)
-                self.plan_active = None
-                return
+        if self.plan_active is None:
             if square in self.plan:
-                self.plan_active = square         # edit a different ghost instead
+                self.plan_active = square            # start assigning this ghost
+                self.plan_pick_a = None
                 return
-            self.plan_active = None               # clicked nothing useful
+            # clicking a *different* superposed own piece switches to planning it
+            g = self._own_ghost_at(square)
+            if g is not None and self.can_mass() and len(self.qb.ghosts_of(g.piece_id)) > 1:
+                self._begin_plan(g.piece_id)
             return
+
+        active = self.plan_active
+        split = self._plan_cap() == 2
+
+        # (mass split) clicking the already-chosen first branch again confirms a
+        # plain single move there rather than splitting.
+        if split and self.plan_pick_a is not None and square == self.plan_pick_a:
+            self.plan_pick_a = None
+            self.plan_active = None
+            return
+
+        # clicking the ghost's own square (when it isn't already branch A) holds
+        # it in place.
+        if square == active and (not split or self.plan_pick_a is None):
+            self.plan[active] = (active,)
+            self._prune_promos(active)
+            self.plan_pick_a = None
+            self.plan_active = None
+            return
+
+        if square in self.plan_legal():
+            if self._is_promo_leg(active, square):
+                # defer the branch commit until the player picks a promotion
+                self._pending_plan_promo = (active, square)
+            else:
+                self._commit_plan_branch(active, square)
+            return
+
+        # clicking a *different* planned ghost switches to editing it.
         if square in self.plan:
+            self.plan_pick_a = None
             self.plan_active = square
             return
-        # clicking a *different* superposed own piece switches to planning it
-        g = self._own_ghost_at(square)
-        if g is not None and self.can_mass() and len(self.qb.ghosts_of(g.piece_id)) > 1:
-            self._begin_plan(g.piece_id)
+
+        self.plan_pick_a = None                      # clicked nothing useful
+        self.plan_active = None
 
     # ------------------------------------------------------------- check odds
     def _check_readout(self):
@@ -305,6 +367,12 @@ class App:
             self._pending_promotion = None
         elif self._pending_plan_promo is not None:
             self._pending_plan_promo = None   # back out of the promo pick, keep the plan
+        elif self.plan is not None and (self.plan_pick_a is not None
+                                        or self.plan_active is not None):
+            # back out of the in-progress ghost assignment first; a second
+            # Escape then cancels the whole plan.
+            self.plan_pick_a = None
+            self.plan_active = None
         elif self.plan is not None:
             self.cancel_plan()
         elif self.split_pick_a is not None:
@@ -489,9 +557,9 @@ class App:
                 choice = render.promotion_choice_at(pos)
                 if choice is not None:
                     frm, to = self._pending_plan_promo
-                    self.plan[frm] = to
-                    self.plan_promo[frm] = choice
+                    self.plan_promo[(frm, to)] = choice
                     self._pending_plan_promo = None
+                    self._commit_plan_branch(frm, to)   # now finish the branch
                 return
             controls = render.mass_controls_rects()
             if controls["confirm"].collidepoint(pos):
@@ -631,28 +699,46 @@ class App:
         self.mode = "move"          # each new turn defaults back to move mode
 
     def _confirm_plan(self):
-        """Resolve the planned mass move: build the ``MassMove``, roll it out
-        via ``resolve_mass_move`` (one measurement settles every conflict), log
-        it, and animate every ghost sliding to its planned destination (the
-        winning ghost lands solid; losers fade in their flash beats)."""
+        """Resolve the planned mass move/split: build the ``MassMove`` (every
+        leg a single move) or ``MassSplit`` (some ghost fans out into two
+        branches), roll it out via ``resolve_mass_move``/``resolve_mass_split``
+        (one measurement settles every conflict), log it, and animate every
+        moving branch sliding out (the winning branch lands solid; the losers
+        travel as ghosts and are faded by the collapse events)."""
         piece_id = self.plan_piece
-        assignments = tuple(self.plan.items())
         label = self._piece_label(piece_id)
         color = self.qb.pieces[piece_id].color
         ptype = self.qb.pieces[piece_id].ptype
         src_prob = {g.square: g.prob for g in self.qb.ghosts_of(piece_id)}
 
-        promotions = tuple((frm, promo) for frm, promo in self.plan_promo.items()
-                           if self.plan.get(frm) not in (None, frm))
         before = self._snapshot_tokens()
-        result = resolve_mass_move(self.qb, MassMove(piece_id, assignments, promotions),
-                                   self.config, self.rng)
+        if self.can_mass_split():
+            legs = tuple((frm, tuple(dests)) for frm, dests in self.plan.items())
+            promotions = tuple((frm, to, promo)
+                               for (frm, to), promo in self.plan_promo.items()
+                               if to in self.plan.get(frm, ()) and to != frm)
+            result = resolve_mass_split(self.qb, MassSplit(piece_id, legs, promotions),
+                                        self.config, self.rng)
+            verb = theme.TERMS['mass_split_verb']
+        else:
+            assignments = tuple((frm, dests[0]) for frm, dests in self.plan.items())
+            promotions = tuple((frm, promo)
+                               for (frm, to), promo in self.plan_promo.items()
+                               if self.plan.get(frm) == (to,) and to != frm)
+            result = resolve_mass_move(self.qb, MassMove(piece_id, assignments, promotions),
+                                       self.config, self.rng)
+            verb = theme.TERMS['mass_verb']
         self._ply += 1
 
-        moved = [(f, t) for f, t in assignments if f != t]
-        legs = ", ".join(f"{chess.square_name(f)}->{chess.square_name(t)}"
-                         for f, t in moved) or "all ghosts hold"
-        self.log.append(f"{label} {theme.TERMS['mass_verb']}: {legs}.")
+        parts = []
+        for frm, dests in self.plan.items():
+            moving = [d for d in dests if d != frm]
+            if not moving and len(dests) == 1:
+                continue                                  # a plain hold
+            targets = "/".join(chess.square_name(d) for d in dests)
+            parts.append(f"{chess.square_name(frm)}->{targets}")
+        legs_desc = ", ".join(parts) or "all ghosts hold"
+        self.log.append(f"{label} {verb}: {legs_desc}.")
         if result.captured_piece_ids:
             names = ", ".join(self._piece_label(i) for i in result.captured_piece_ids)
             self.log.append(f"{label} {theme.TERMS['capture_verb']} {names}.")
@@ -663,19 +749,26 @@ class App:
             winner = self.config.team_name(self.qb.winner)
             self.log.append(f"** {winner} {theme.TERMS['win_suffix']} **")
 
-        # Every moving ghost slides out from its source (like a split's branches);
-        # the winner (if the piece collapsed) lands solid on its real square, the
-        # others travel as ghosts and are faded by the collapse events.
+        # Every moving branch slides out from its source (like a split's
+        # branches); the winning branch (if the piece collapsed) lands solid on
+        # its real square, the rest travel as ghosts and are faded by the
+        # collapse events. `chosen_to` disambiguates the winning branch from a
+        # *sibling* branch of the same source when a ghost split into two.
         movers = []
-        for frm, to in assignments:
-            if frm == to:
-                continue
-            if result.chosen_from == frm and result.final_square is not None:
-                dest_tok = Token(piece_id, color, ptype, result.final_square,
-                                 src_prob[frm], True)
-            else:
-                dest_tok = Token(piece_id, color, ptype, to, src_prob[frm], False)
-            movers.append((dest_tok, frm))
+        winner_used = False
+        for frm, dests in self.plan.items():
+            branch_prob = src_prob[frm] / len(dests)
+            for to in dests:
+                if frm == to:
+                    continue
+                if (not winner_used and result.final_square is not None
+                        and result.chosen_from == frm and result.chosen_to == to):
+                    dest_tok = Token(piece_id, color, ptype, result.final_square,
+                                     branch_prob, True)
+                    winner_used = True
+                else:
+                    dest_tok = Token(piece_id, color, ptype, to, branch_prob, False)
+                movers.append((dest_tok, frm))
         self._begin_animation(before, movers, result.events)
 
         self.cancel_plan()

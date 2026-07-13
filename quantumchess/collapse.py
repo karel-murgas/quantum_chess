@@ -36,7 +36,7 @@ import chess
 from .config import CollapseMode, GameConfig
 from .model import Ghost, QuantumBoard
 from .rules import (
-    MassMove, Move, MoveKind, Split, apply_move, mass_assignment_move,
+    MassMove, MassSplit, Move, MoveKind, Split, apply_move, mass_assignment_move,
     remove_piece, split_destination_castle_rook, split_destination_kind,
 )
 
@@ -84,11 +84,16 @@ class MassMoveResolution:
     or a plan with no conflicts at all). ``chosen_from`` is the source square of
     the ghost that turned out to be the real one (only set when the piece
     collapsed) so the UI can slide *that* ghost to ``final_square`` while the
-    others fade at their planned destinations."""
+    others fade at their planned destinations. ``chosen_to`` is the *intended*
+    destination of that winning leg (which equals ``final_square`` unless a
+    CONTACT slide stopped short) -- the UI needs it to tell the winning branch
+    apart from a *sibling* branch of the same source ghost when a mass **split**
+    sent one source to two squares."""
     events: list[CollapseEvent] = field(default_factory=list)
     captured_piece_ids: list[int] = field(default_factory=list)
     final_square: Optional[int] = None
     chosen_from: Optional[int] = None
+    chosen_to: Optional[int] = None
 
 
 @dataclass
@@ -505,50 +510,39 @@ def _end_mass_turn(qb: QuantumBoard) -> None:
         qb.turn = not qb.turn
 
 
-def resolve_mass_move(qb: QuantumBoard, mass: MassMove, config: GameConfig,
-                      rng: random.Random) -> MassMoveResolution:
-    """Move *every* ghost of one piece in a single planned turn (the "mass
-    movement" dial). See ``rules.MassMove`` and CLAUDE.md.
+def _classify_mass_entry(qb: QuantumBoard, pid: int, from_sq: int, to_sq: int,
+                         prob: Fraction, promotion: Optional[int]) -> _MassEntry:
+    """Classify one planned leg against the pre-move board. A leg that contacts
+    another piece (or promotes a still-superposed pawn) is a *conflict*."""
+    move = mass_assignment_move(qb, pid, from_sq, to_sq, promotion)
+    if move is None:
+        raise ValueError(f"illegal mass leg {from_sq}->{to_sq}")
+    is_conflict = (move.kind in (MoveKind.CONTACT, MoveKind.CAPTURE_SOLID)
+                   or move.promotion is not None)
+    return _MassEntry(from_sq, to_sq, move, prob, is_conflict)
 
-    Each leg is classified against the pre-move board. A leg that contacts
-    another piece (or promotes a still-superposed pawn) is a *conflict*.
 
-      - No conflicts: every ghost just relocates (probabilities merge by
+def _resolve_mass_entries(qb: QuantumBoard, pid: int, entries: list[_MassEntry],
+                          config: GameConfig, rng: random.Random) -> MassMoveResolution:
+    """Settle a piece's whole planned superposition (the ``entries``, whose
+    probabilities sum to 1) with a single measurement -- shared by both the
+    ``MassMove`` (one leg per ghost) and ``MassSplit`` (a split ghost yields two
+    half-probability legs) dials, since a split is just extra legs.
+
+      - No conflicts: every leg just relocates (probabilities merge by
         destination), no dice.
       - Otherwise: one categorical roll picks where the piece really is.
-          * a *safe* square wins -> the conflicting legs vanish; the safe legs
+          * a *safe* leg wins -> the conflicting legs vanish; the safe legs
             survive (PARTIAL, renormalized) or the piece collapses solid onto
             the winning square (FULL) -- obeying the match's collapse-mode dial.
-          * a *conflict* square wins -> the piece collapses solid there and that
+          * a *conflict* leg wins -> the piece collapses solid there and that
             one slide resolves like any CONTACT/CAPTURE_SOLID move (measuring the
-            enemy on its path), while every other ghost vanishes.
+            enemy on its path), while every other leg vanishes.
 
-    So one measurement conclusively clears the whole superposition's conflicts.
+    ``qb.pieces[pid].has_moved`` must already be set by the caller (after it has
+    classified the legs, so a would-be castle leg still reads as one).
     """
-    if qb.game_over:
-        raise RuntimeError("game is already over")
-
-    pid = mass.piece_id
     mover_color = qb.pieces[pid].color
-
-    # Classify every leg *before* touching has_moved (same ordering care as split).
-    promo_by_from = dict(mass.promotions)
-    ghosts_by_sq = {g.square: g for g in qb.ghosts_of(pid)}
-    entries: list[_MassEntry] = []
-    for from_sq, to_sq in mass.assignments:
-        g = ghosts_by_sq.get(from_sq)
-        if g is None:
-            raise ValueError(f"no ghost of piece {pid} on square {from_sq}")
-        move = mass_assignment_move(qb, pid, from_sq, to_sq, promo_by_from.get(from_sq))
-        if move is None:
-            raise ValueError(f"illegal mass-move leg {from_sq}->{to_sq}")
-        is_conflict = (move.kind in (MoveKind.CONTACT, MoveKind.CAPTURE_SOLID)
-                       or move.promotion is not None)
-        entries.append(_MassEntry(from_sq, to_sq, move, g.prob, is_conflict))
-    if len(entries) != len(ghosts_by_sq):
-        raise ValueError("a mass move must assign every ghost of the piece exactly once")
-
-    qb.pieces[pid].has_moved = True
     res = MassMoveResolution()
     conflicts = [e for e in entries if e.is_conflict]
 
@@ -577,6 +571,7 @@ def resolve_mass_move(qb: QuantumBoard, mass: MassMove, config: GameConfig,
                                             True, removed=dropped))
             res.final_square = chosen.to_sq
             res.chosen_from = chosen.from_sq
+            res.chosen_to = chosen.to_sq
         _end_mass_turn(qb)
         return res
 
@@ -623,5 +618,76 @@ def resolve_mass_move(qb: QuantumBoard, mass: MassMove, config: GameConfig,
     res.captured_piece_ids = captured_ids
     res.final_square = stop_square
     res.chosen_from = chosen.from_sq
+    res.chosen_to = chosen.to_sq
     _end_mass_turn(qb)
     return res
+
+
+def resolve_mass_move(qb: QuantumBoard, mass: MassMove, config: GameConfig,
+                      rng: random.Random) -> MassMoveResolution:
+    """Move *every* ghost of one piece in a single planned turn (the "mass
+    movement" dial). See ``rules.MassMove`` and CLAUDE.md.
+
+    One categorical measurement settles every conflict at once (see
+    ``_resolve_mass_entries``); a conflict-free plan just relocates all ghosts.
+    """
+    if qb.game_over:
+        raise RuntimeError("game is already over")
+
+    pid = mass.piece_id
+    # Classify every leg *before* touching has_moved (same ordering care as split).
+    promo_by_from = dict(mass.promotions)
+    ghosts_by_sq = {g.square: g for g in qb.ghosts_of(pid)}
+    entries: list[_MassEntry] = []
+    for from_sq, to_sq in mass.assignments:
+        g = ghosts_by_sq.get(from_sq)
+        if g is None:
+            raise ValueError(f"no ghost of piece {pid} on square {from_sq}")
+        entries.append(_classify_mass_entry(qb, pid, from_sq, to_sq, g.prob,
+                                            promo_by_from.get(from_sq)))
+    if len(entries) != len(ghosts_by_sq):
+        raise ValueError("a mass move must assign every ghost of the piece exactly once")
+
+    qb.pieces[pid].has_moved = True
+    return _resolve_mass_entries(qb, pid, entries, config, rng)
+
+
+def resolve_mass_split(qb: QuantumBoard, mass: MassSplit, config: GameConfig,
+                       rng: random.Random) -> MassMoveResolution:
+    """Move *or split* every ghost of one piece in a single planned turn (the
+    "mass split" dial). See ``rules.MassSplit`` and CLAUDE.md.
+
+    A ghost with a single-destination leg relocates exactly like a
+    ``MassMove`` leg; a ghost with two destinations splits its probability in
+    half across them. All the resulting halves sum to 1 and are settled by the
+    same single measurement as a mass move (``_resolve_mass_entries``), so a
+    mass split whose every leg is single is byte-for-byte a mass move.
+    """
+    if qb.game_over:
+        raise RuntimeError("game is already over")
+
+    pid = mass.piece_id
+    promo_by_leg = {(f, t): p for f, t, p in mass.promotions}
+    ghosts_by_sq = {g.square: g for g in qb.ghosts_of(pid)}
+    seen_from: set[int] = set()
+    entries: list[_MassEntry] = []
+    for from_sq, dests in mass.legs:
+        g = ghosts_by_sq.get(from_sq)
+        if g is None:
+            raise ValueError(f"no ghost of piece {pid} on square {from_sq}")
+        if from_sq in seen_from:
+            raise ValueError(f"ghost on {from_sq} assigned more than once")
+        seen_from.add(from_sq)
+        if len(dests) not in (1, 2):
+            raise ValueError("a mass-split leg needs one or two destinations")
+        if len(dests) == 2 and dests[0] == dests[1]:
+            raise ValueError("a split leg needs two distinct destinations")
+        share = g.prob / len(dests)
+        for to_sq in dests:
+            entries.append(_classify_mass_entry(qb, pid, from_sq, to_sq, share,
+                                                promo_by_leg.get((from_sq, to_sq))))
+    if seen_from != set(ghosts_by_sq):
+        raise ValueError("a mass split must assign every ghost of the piece exactly once")
+
+    qb.pieces[pid].has_moved = True
+    return _resolve_mass_entries(qb, pid, entries, config, rng)

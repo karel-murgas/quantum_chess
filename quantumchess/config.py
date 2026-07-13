@@ -22,6 +22,7 @@ class GameConfig:
     collapse_mode: CollapseMode = CollapseMode.FULL
     splitting_enabled: bool = True
     mass_movement: bool = False        # allow moving *all* of a piece's ghosts in one planned turn
+    mass_split: bool = False           # (requires mass_movement) each ghost may move *or* split in a mass turn
     seed: Optional[int] = None
     theme: str = "origin"              # "origin" | "cyberpunk"
     # Board art, chosen per team ("cburnett"|"merida"|"neon"|"unicode").

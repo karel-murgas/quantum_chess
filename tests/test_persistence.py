@@ -52,6 +52,7 @@ def test_from_dict_defaults_has_moved_false_for_old_saves():
 def test_to_dict_from_dict_round_trips_board_state():
     qb = _superposed_board()
     config = GameConfig(collapse_mode=CollapseMode.PARTIAL, splitting_enabled=True, seed=7,
+                        mass_movement=True, mass_split=True,
                         white_piece_set="merida", black_piece_set="neon")
     rng = __import__("random").Random(7)
     rng.random()   # advance state so we can check it's actually preserved, not just re-seeded
@@ -72,6 +73,8 @@ def test_to_dict_from_dict_round_trips_board_state():
 
     assert config2.collapse_mode == config.collapse_mode
     assert config2.splitting_enabled == config.splitting_enabled
+    assert config2.mass_movement == config.mass_movement
+    assert config2.mass_split == config.mass_split
     assert config2.seed == config.seed
     assert config2.white_piece_set == "merida"
     assert config2.black_piece_set == "neon"
