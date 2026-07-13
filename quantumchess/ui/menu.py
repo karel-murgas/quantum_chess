@@ -14,6 +14,7 @@ from . import theme, pieces, render
 
 MAX_NAME_LEN = 16
 TEAMS_SAVE_PATH = Path("saves/teams.json")
+LAST_SETTINGS_PATH = Path("saves/last_settings.json")
 
 
 class Menu:
@@ -30,6 +31,7 @@ class Menu:
         self.collapse_mode = CollapseMode.FULL
         self.splitting_enabled = True
         self.mass_movement = False
+        self.mass_split = False
         self.seed = random.SystemRandom().randrange(1_000_000)
 
         self.theme_name = "origin"
@@ -45,6 +47,7 @@ class Menu:
             self.collapse_mode = initial_config.collapse_mode
             self.splitting_enabled = initial_config.splitting_enabled
             self.mass_movement = initial_config.mass_movement
+            self.mass_split = initial_config.mass_split
             self.seed = initial_config.seed
             self.theme_name = initial_config.theme
             self.white_piece_set = initial_config.white_piece_set
@@ -54,7 +57,7 @@ class Menu:
             self.white_color = initial_config.white_color
             self.black_color = initial_config.black_color
         else:
-            self._load_teams(startup=True)
+            self._load_startup_defaults()
 
         self.font_title = pygame.font.SysFont("segoeui", 36, bold=True)
         self.font = pygame.font.SysFont("segoeui", 22)
@@ -66,8 +69,11 @@ class Menu:
         cx = w // 2
         self.collapse_full_rect = pygame.Rect(cx - 220, 112, 200, 40)
         self.collapse_partial_rect = pygame.Rect(cx + 20, 112, 200, 40)
-        self.split_toggle_rect = pygame.Rect(cx - 220, 164, 200, 40)
-        self.mass_toggle_rect = pygame.Rect(cx + 20, 164, 200, 40)
+        # The "Splitting"/"Mass moves"/"Mass split" toggle row is laid out
+        # dynamically (see _dial_specs/_dial_rects) -- each toggle is only
+        # shown once its prerequisite dial is on, so the row's width (and
+        # therefore each button's rect) depends on the current state and can't
+        # be fixed up front.
 
         self.theme_rects = {
             "origin": pygame.Rect(cx - 220, 232, 200, 40),
@@ -127,10 +133,47 @@ class Menu:
             rects.append(pygame.Rect(x, y, size, size))
         return rects
 
+    def _dial_specs(self):
+        """(key, label, active) for each "Splitting"/"Mass moves"/"Mass split"
+        toggle currently visible. Each is **hidden entirely** (not merely
+        disabled) once its prerequisite dial is off -- mass movement only
+        makes sense with splitting on, and mass split only with mass movement
+        on -- so there's nothing to show a player that couldn't apply."""
+        specs = [("split", f"Splitting: {'On' if self.splitting_enabled else 'Off'}",
+                 self.splitting_enabled)]
+        if self.splitting_enabled:
+            specs.append(("mass", f"Mass moves: {'On' if self.mass_movement else 'Off'}",
+                         self.mass_movement))
+            if self.mass_movement:
+                specs.append(("mass_split", f"Mass split: {'On' if self.mass_split else 'Off'}",
+                             self.mass_split))
+        return specs
+
+    def _dial_rects(self):
+        """{key -> Rect} for the currently-visible dial toggles (see
+        ``_dial_specs``), laid out as a row centered on the same span the
+        fixed 3-button row used to occupy. Recomputed live rather than cached
+        in ``__init__`` -- which toggles are visible depends on the current
+        dial state, so the row's width can change as the player clicks."""
+        specs = self._dial_specs()
+        w, h, gap = 150, 40, 10
+        total = len(specs) * w + (len(specs) - 1) * gap
+        cx = self.screen.get_width() // 2
+        x0 = cx - total // 2
+        y = 164
+        return {key: pygame.Rect(x0 + i * (w + gap), y, w, h)
+                for i, (key, _label, _active) in enumerate(specs)}
+
     def _build_config(self):
+        # Defensive AND-gating of the dial dependency chain (splitting ->
+        # mass movement -> mass split), in case a loaded config had them out
+        # of sync (e.g. a hand-edited save) -- normal UI clicks already keep
+        # them consistent via the cascading resets in handle_click.
+        mass_movement = self.mass_movement and self.splitting_enabled
         return GameConfig(collapse_mode=self.collapse_mode,
                           splitting_enabled=self.splitting_enabled,
-                          mass_movement=self.mass_movement,
+                          mass_movement=mass_movement,
+                          mass_split=self.mass_split and mass_movement,
                           seed=self.seed,
                           theme=self.theme_name,
                           white_piece_set=self.white_piece_set,
@@ -155,14 +198,24 @@ class Menu:
             return None
         self.active_field = None
 
+        dial_rects = self._dial_rects()   # only the currently-visible toggles
         if self.collapse_full_rect.collidepoint(pos):
             self.collapse_mode = CollapseMode.FULL
         elif self.collapse_partial_rect.collidepoint(pos):
             self.collapse_mode = CollapseMode.PARTIAL
-        elif self.split_toggle_rect.collidepoint(pos):
+        elif dial_rects["split"].collidepoint(pos):
             self.splitting_enabled = not self.splitting_enabled
-        elif self.mass_toggle_rect.collidepoint(pos):
+            if not self.splitting_enabled:
+                # mass movement (and mass split with it) only make sense with
+                # splitting on -- turning splitting off hides and clears both.
+                self.mass_movement = False
+                self.mass_split = False
+        elif "mass" in dial_rects and dial_rects["mass"].collidepoint(pos):
             self.mass_movement = not self.mass_movement
+            if not self.mass_movement:
+                self.mass_split = False   # can't mass-split without mass movement
+        elif "mass_split" in dial_rects and dial_rects["mass_split"].collidepoint(pos):
+            self.mass_split = not self.mass_split
         elif self.theme_rects["origin"].collidepoint(pos):
             self.theme_name = "origin"
         elif self.theme_rects["cyberpunk"].collidepoint(pos):
@@ -186,9 +239,9 @@ class Menu:
         elif self.team_load_rect.collidepoint(pos):
             self._load_teams()
         elif self.in_game and self.resume_rect.collidepoint(pos):
-            return ("resume", self._build_config())
+            return self._finalize("resume")
         elif self.start_rect.collidepoint(pos):
-            return ("new_game" if self.in_game else "start", self._build_config())
+            return self._finalize("new_game" if self.in_game else "start")
         elif self.theme_name == "cyberpunk":
             for rect, color in zip(self.white_swatch_rects, theme.SWATCHES):
                 if rect.collidepoint(pos):
@@ -199,6 +252,20 @@ class Menu:
                     self.black_color = color
                     return None
         return None
+
+    def _finalize(self, action):
+        """Build the edited config, remember it (every dial + cosmetic field)
+        for the next app start via ``persistence.save_last_settings``, and
+        return ``(action, config)`` for the caller to apply. Runs on every
+        Start/New Game/Resume click -- the moment settings are actually
+        confirmed -- so the last-used setup persists across app restarts with
+        no separate save step (see ``_load_startup_defaults``)."""
+        config = self._build_config()
+        try:
+            persistence.save_last_settings(LAST_SETTINGS_PATH, config)
+        except OSError:
+            pass   # best-effort; a failed remember shouldn't block starting the game
+        return (action, config)
 
     def handle_keydown(self, event):
         if self.active_field is None:
@@ -231,6 +298,31 @@ class Menu:
             self.team_status = "Teams saved."
         except OSError as exc:
             self.team_status = f"Save failed: {exc}"
+
+    def _load_startup_defaults(self):
+        """Prefill every field -- dials *and* cosmetics -- from the settings
+        last used to start/resume/restart a game (``saves/last_settings.json``,
+        written automatically by ``_finalize``), so a fresh app launch reopens
+        the menu exactly as it was last left. Falls back to a saved team
+        profile (cosmetics only, no dials -- see ``_load_teams``) for a first
+        run before anything's been auto-saved yet, then to the hardcoded
+        defaults. Silent either way: there's nothing to report on startup."""
+        try:
+            data = persistence.load_last_settings(LAST_SETTINGS_PATH)
+        except (OSError, ValueError, KeyError):
+            self._load_teams(startup=True)
+            return
+        self.collapse_mode = data["collapse_mode"]
+        self.splitting_enabled = data["splitting_enabled"]
+        self.mass_movement = data["mass_movement"]
+        self.mass_split = data["mass_split"]
+        self.theme_name = data["theme"]
+        self.white_piece_set = data["white_piece_set"]
+        self.black_piece_set = data["black_piece_set"]
+        self.white_name = data["white_name"]
+        self.black_name = data["black_name"]
+        self.white_color = data["white_color"]
+        self.black_color = data["black_color"]
 
     def _load_teams(self, startup: bool = False):
         """Load a saved team setup back into the menu fields.
@@ -268,12 +360,17 @@ class Menu:
         self.white_piece_set, self.black_piece_set = self.black_piece_set, self.white_piece_set
         self.active_field = None
 
-    def _button(self, rect, label, active):
-        color = theme.ACCENT if active else theme.PANEL_BG
+    def _button(self, rect, label, active, enabled=True, font=None):
+        font = font or self.font
+        if not enabled:
+            color, text_color = theme.PANEL_BG, theme.TEXT_DIM
+        elif active:
+            color, text_color = theme.ACCENT, (20, 20, 20)
+        else:
+            color, text_color = theme.PANEL_BG, theme.TEXT
         pygame.draw.rect(self.screen, color, rect, border_radius=8)
         pygame.draw.rect(self.screen, theme.TEXT_DIM, rect, width=2, border_radius=8)
-        text_color = (20, 20, 20) if active else theme.TEXT
-        surf = self.font.render(label, True, text_color)
+        surf = font.render(label, True, text_color)
         self.screen.blit(surf, surf.get_rect(center=rect.center))
 
     def _draw_piece_row(self, rects, selected, name, color):
@@ -340,12 +437,9 @@ class Menu:
         self._button(self.collapse_full_rect, "Full", self.collapse_mode == CollapseMode.FULL)
         self._button(self.collapse_partial_rect, "Partial", self.collapse_mode == CollapseMode.PARTIAL)
 
-        self._button(self.split_toggle_rect,
-                    f"Splitting: {'On' if self.splitting_enabled else 'Off'}",
-                    self.splitting_enabled)
-        self._button(self.mass_toggle_rect,
-                    f"Mass moves: {'On' if self.mass_movement else 'Off'}",
-                    self.mass_movement)
+        dial_rects = self._dial_rects()
+        for key, label, active in self._dial_specs():
+            self._button(dial_rects[key], label, active, font=self.font_small)
 
         theme_caption = self.font_small.render("Board theme:", True, theme.TEXT_DIM)
         self.screen.blit(theme_caption, theme_caption.get_rect(center=(w // 2, self.theme_rects["origin"].y - 18)))

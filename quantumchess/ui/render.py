@@ -319,19 +319,30 @@ def draw_plan_rings(surface, plan, plan_active, plan_piece):
         pygame.draw.rect(surface, theme.SELECTED_RING, square_rect(plan_active), width=theme.px(5))
 
 
-def draw_plan_arrows(surface, plan, plan_piece):
-    """One arrow per reassigned ghost (source -> chosen destination) with a ring
-    on the destination; a small 'hold' dot marks a ghost left in place. Drawn
-    *over* the pieces so the plan stays legible."""
+def draw_plan_arrows(surface, plan, plan_piece, plan_pick_a=None):
+    """One arrow per moving branch (source -> chosen destination) with a ring on
+    each destination; a small 'hold' dot marks a ghost (or split branch) left in
+    place. A ghost that splits shows two arrows from the same source. The
+    in-progress first split branch (``plan_pick_a``) gets a distinct pick ring,
+    mirroring the top-level split picker. Drawn *over* the pieces so the plan
+    stays legible."""
     color = _aura_color(plan_piece)
-    for frm, to in plan.items():
-        if frm == to:
-            pygame.draw.circle(surface, color, square_rect(frm).center,
-                               theme.SQUARE // 10, width=theme.px(3))
+    for frm, dests in plan.items():
+        a = square_rect(frm).center
+        if all(d == frm for d in dests):
+            pygame.draw.circle(surface, color, a, theme.SQUARE // 10, width=theme.px(3))
             continue
-        a, b = square_rect(frm).center, square_rect(to).center
-        _draw_arrow(surface, a, b, color)
-        pygame.draw.circle(surface, color, b, theme.SQUARE // 6, width=theme.px(3))
+        for to in dests:
+            if to == frm:
+                # a "stay" branch of a split -- mark the source as one endpoint.
+                pygame.draw.circle(surface, color, a, theme.SQUARE // 10, width=theme.px(3))
+                continue
+            b = square_rect(to).center
+            _draw_arrow(surface, a, b, color)
+            pygame.draw.circle(surface, color, b, theme.SQUARE // 6, width=theme.px(3))
+    if plan_pick_a is not None:
+        pygame.draw.circle(surface, theme.SPLIT_PICK_RING, square_rect(plan_pick_a).center,
+                           theme.SQUARE // 5, width=theme.px(4))
 
 
 def draw_mass_controls(surface, fonts):

@@ -8,7 +8,8 @@ import pytest
 from quantumchess.config import CollapseMode, GameConfig
 from quantumchess.model import Ghost, QuantumBoard
 from quantumchess.persistence import (
-    from_dict, load_game, load_teams, save_game, save_teams, to_dict,
+    from_dict, load_game, load_last_settings, load_teams, save_game,
+    save_last_settings, save_teams, to_dict,
 )
 from quantumchess.rules import Split, apply_split
 
@@ -52,6 +53,7 @@ def test_from_dict_defaults_has_moved_false_for_old_saves():
 def test_to_dict_from_dict_round_trips_board_state():
     qb = _superposed_board()
     config = GameConfig(collapse_mode=CollapseMode.PARTIAL, splitting_enabled=True, seed=7,
+                        mass_movement=True, mass_split=True,
                         white_piece_set="merida", black_piece_set="neon")
     rng = __import__("random").Random(7)
     rng.random()   # advance state so we can check it's actually preserved, not just re-seeded
@@ -72,6 +74,8 @@ def test_to_dict_from_dict_round_trips_board_state():
 
     assert config2.collapse_mode == config.collapse_mode
     assert config2.splitting_enabled == config.splitting_enabled
+    assert config2.mass_movement == config.mass_movement
+    assert config2.mass_split == config.mass_split
     assert config2.seed == config.seed
     assert config2.white_piece_set == "merida"
     assert config2.black_piece_set == "neon"
@@ -173,3 +177,54 @@ def test_load_teams_rejects_unknown_version(tmp_path):
     path.write_text('{"version": 999}', encoding="utf-8")
     with pytest.raises(ValueError):
         load_teams(path)
+
+
+# ----------------------------------------------------- last-used settings
+def test_save_last_settings_then_load_round_trips_via_disk(tmp_path):
+    path = tmp_path / "nested" / "last_settings.json"   # parent dir doesn't exist yet
+    config = GameConfig(collapse_mode=CollapseMode.PARTIAL, splitting_enabled=True,
+                        mass_movement=True, mass_split=True, seed=99,
+                        theme="cyberpunk", white_piece_set="neon", black_piece_set="merida",
+                        white_name="Alice", black_name="Bob",
+                        white_color=(255, 46, 199), black_color=(0, 224, 255))
+    save_last_settings(path, config)
+    assert path.exists()
+
+    data = load_last_settings(path)
+    assert data == {
+        "collapse_mode": CollapseMode.PARTIAL,
+        "splitting_enabled": True,
+        "mass_movement": True,
+        "mass_split": True,
+        "theme": "cyberpunk",
+        "white_piece_set": "neon",
+        "black_piece_set": "merida",
+        "white_name": "Alice",
+        "black_name": "Bob",
+        "white_color": (255, 46, 199),
+        "black_color": (0, 224, 255),
+    }
+    # note: seed is deliberately NOT part of last-used settings -- every match
+    # still gets a fresh random seed at the menu, so it doesn't round-trip.
+
+
+def test_load_last_settings_falls_back_to_defaults_for_missing_fields(tmp_path):
+    """A grow-only schema: a last-settings file predating a newer dial (e.g.
+    mass_split) still loads, just defaulting that field."""
+    path = tmp_path / "old.json"
+    path.write_text(
+        '{"version": 1, "collapse_mode": "full", "splitting_enabled": true,'
+        ' "theme": "origin", "white_name": "W", "black_name": "B",'
+        ' "white_color": [1, 2, 3], "black_color": [4, 5, 6]}',
+        encoding="utf-8")
+    data = load_last_settings(path)
+    assert data["mass_movement"] is False
+    assert data["mass_split"] is False
+    assert data["white_piece_set"] == "cburnett"
+
+
+def test_load_last_settings_rejects_unknown_version(tmp_path):
+    path = tmp_path / "bad.json"
+    path.write_text('{"version": 999}', encoding="utf-8")
+    with pytest.raises(ValueError):
+        load_last_settings(path)

@@ -58,8 +58,25 @@ def test_dial_on_enters_planning_for_superposed_piece():
     _click(app, chess.A1)
     assert app.is_planning()
     assert app.plan_piece == rook.id
-    assert app.plan == {chess.A1: chess.A1, chess.H1: chess.H1}  # all default to "stay"
+    assert app.plan == {chess.A1: (chess.A1,), chess.H1: (chess.H1,)}  # all default to "stay"
     assert app.selected is None
+
+
+def test_dial_on_enters_planning_even_while_in_split_mode():
+    """Regression: selecting a superposed piece must open mass-move planning
+    regardless of the top-level Move/Split toggle -- previously it only
+    triggered while `mode == "move"`, so a player who switched to Split mode
+    (a natural thing to try when they want to split ghosts) got dropped into
+    an ordinary one-ghost split instead of planning, and the turn ended after
+    touching only one ghost."""
+    app, rook = _mass_app(mass=True)
+    app.toggle_mode()
+    assert app.mode == "split"
+    _click(app, chess.A1)
+    assert app.is_planning()
+    assert app.plan_piece == rook.id
+    assert app.selected is None
+    assert app.mode == "move"   # the toggle is meaningless during planning; normalized back
 
 
 def test_solid_piece_not_planned_even_with_dial_on():
@@ -75,11 +92,11 @@ def test_assign_legs_and_confirm_no_conflict():
     _click(app, chess.A1)          # make a1 the active ghost
     assert app.plan_active == chess.A1
     _click(app, chess.A4)          # aim it at a4
-    assert app.plan[chess.A1] == chess.A4
+    assert app.plan[chess.A1] == (chess.A4,)
     assert app.plan_active is None
     _click(app, chess.H1)          # active h1
     _click(app, chess.H4)          # aim it at h4
-    assert app.plan[chess.H1] == chess.H4
+    assert app.plan[chess.H1] == (chess.H4,)
 
     _click_rect(app, render.mass_controls_rects()["confirm"])
     assert not app.is_planning()
@@ -143,12 +160,12 @@ def test_promotion_leg_prompts_and_uses_chosen_piece():
     _click(app, chess.A7)          # active a7
     _click(app, chess.A8)          # aim at a8 -> should prompt for promotion
     assert app._pending_plan_promo == (chess.A7, chess.A8)
-    assert app.plan[chess.A7] == chess.A7   # not committed until a piece is picked
+    assert app.plan[chess.A7] == (chess.A7,)   # not committed until a piece is picked
 
     _click_rect(app, render.promotion_rects()[chess.ROOK])
     assert app._pending_plan_promo is None
-    assert app.plan[chess.A7] == chess.A8
-    assert app.plan_promo[chess.A7] == chess.ROOK
+    assert app.plan[chess.A7] == (chess.A8,)
+    assert app.plan_promo[(chess.A7, chess.A8)] == chess.ROOK
 
     _click(app, chess.H2)
     _click(app, chess.H3)          # h2 -> h3 (safe)
@@ -172,12 +189,12 @@ def test_reaiming_a_promo_leg_elsewhere_drops_the_promotion():
     _click(app, chess.A7)
     _click(app, chess.A8)
     _click_rect(app, render.promotion_rects()[chess.QUEEN])
-    assert app.plan_promo.get(chess.A7) == chess.QUEEN
+    assert app.plan_promo.get((chess.A7, chess.A8)) == chess.QUEEN
     # re-aim the same ghost back to holding -> the stale promotion is cleared
     _click(app, chess.A7)          # select it again
     _click(app, chess.A7)          # click itself -> hold
-    assert app.plan[chess.A7] == chess.A7
-    assert chess.A7 not in app.plan_promo
+    assert app.plan[chess.A7] == (chess.A7,)
+    assert (chess.A7, chess.A8) not in app.plan_promo
 
 
 def test_cancel_button_aborts_plan():

@@ -304,20 +304,27 @@ class BaseSkin:
 
     # -------------------------------------------------------- mass-move plan
     def draw_plan(self, surf, app):
-        """Draw the in-progress mass-move plan: sibling web + aura/active rings
-        under the pieces, the active ghost's legal targets in this skin's own
-        dot/ring language, then the assignment arrows over the pieces and the
-        floating Confirm/Cancel controls. Returns a status prompt."""
+        """Draw the in-progress mass-move / mass-split plan: sibling web +
+        aura/active rings under the pieces, the active ghost's legal targets in
+        this skin's own dot/ring language, then the assignment arrows over the
+        pieces and the floating Confirm/Cancel controls. Returns a status
+        prompt."""
         self.draw_sibling_web(surf, app)
         render.draw_plan_rings(surf, app.plan, app.plan_active, app.plan_piece)
         self.draw_legal(surf, app, app.plan_legal(), {})
         self.draw_pieces(surf, app)
-        render.draw_plan_arrows(surf, app.plan, app.plan_piece)
+        render.draw_plan_arrows(surf, app.plan, app.plan_piece, app.plan_pick_a)
         render.draw_mass_controls(surf, self.fonts)
+        split = app.can_mass_split()
+        noun = "Mass split" if split else "Mass move"
         if app._pending_plan_promo is not None:
-            return "Choose promotion for this ghost: click a piece"
+            return "Choose promotion for this branch: click a piece"
         if app.plan_active is None:
-            return "Mass move: click a ghost to aim it, then Confirm"
+            return f"{noun}: click a ghost to aim it, then Confirm"
+        if split and app.plan_pick_a is not None:
+            return "2nd square = split; the 1st square again = single move"
+        if split:
+            return "Click a target (its square = hold), or two squares = split"
         return "Mass move: click this ghost's target (or itself to hold)"
 
     # ------------------------------------------------------------- collapse

@@ -455,6 +455,128 @@ def test_menu_defaults_stay_hardcoded_without_a_saved_teams_file(tmp_path, monke
     assert fresh.black_name == "Black"
 
 
+# ---------------------------------------------------- dial toggle visibility
+def test_mass_toggle_hidden_when_splitting_off():
+    m = Menu(_SCREEN)
+    m.splitting_enabled = False
+    keys = {key for key, _label, _active in m._dial_specs()}
+    assert keys == {"split"}
+    assert "mass" not in m._dial_rects()
+    assert "mass_split" not in m._dial_rects()
+
+
+def test_mass_split_toggle_hidden_when_mass_moves_off():
+    m = Menu(_SCREEN)
+    m.splitting_enabled = True
+    m.mass_movement = False
+    keys = {key for key, _label, _active in m._dial_specs()}
+    assert keys == {"split", "mass"}
+    assert "mass_split" not in m._dial_rects()
+
+
+def test_all_three_toggles_visible_when_everything_on():
+    m = Menu(_SCREEN)
+    m.splitting_enabled = True
+    m.mass_movement = True
+    m.mass_split = True
+    keys = {key for key, _label, _active in m._dial_specs()}
+    assert keys == {"split", "mass", "mass_split"}
+
+
+def test_turning_off_splitting_cascades_off_mass_and_mass_split():
+    m = Menu(_SCREEN)
+    m.splitting_enabled = True
+    m.mass_movement = True
+    m.mass_split = True
+    rects = m._dial_rects()
+    m.handle_click(rects["split"].center)   # toggle Splitting off
+    assert m.splitting_enabled is False
+    assert m.mass_movement is False
+    assert m.mass_split is False
+
+
+def test_turning_off_mass_moves_cascades_off_mass_split():
+    m = Menu(_SCREEN)
+    m.splitting_enabled = True
+    m.mass_movement = True
+    m.mass_split = True
+    rects = m._dial_rects()
+    m.handle_click(rects["mass"].center)    # toggle Mass moves off
+    assert m.mass_movement is False
+    assert m.mass_split is False
+    assert m.splitting_enabled is True      # untouched
+
+
+def test_clicking_where_a_hidden_toggle_used_to_be_does_nothing_bad():
+    """With mass split hidden (mass moves off), a click at the position the
+    3rd button would have occupied must not raise or silently flip an
+    unrelated dial -- it should just fall through to no-op."""
+    m = Menu(_SCREEN)
+    m.splitting_enabled = True
+    m.mass_movement = False
+    rects_three = None
+    # compute where "mass_split" *would* be if all three were visible, by
+    # temporarily enabling mass_movement
+    m.mass_movement = True
+    would_be = m._dial_rects()["mass_split"].center
+    m.mass_movement = False
+    before = (m.splitting_enabled, m.mass_movement, m.mass_split)
+    m.handle_click(would_be)
+    assert (m.splitting_enabled, m.mass_movement, m.mass_split) == before
+
+
+# --------------------------------------------------- remembering last settings
+def test_start_game_remembers_dials_and_cosmetics_for_next_startup(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    m = Menu(_SCREEN)
+    m.splitting_enabled = True
+    m.mass_movement = True
+    m.mass_split = True
+    m.collapse_mode = CollapseMode.PARTIAL
+    m.theme_name = "cyberpunk"
+    m.white_name = "Alice"
+    m.black_name = "Bob"
+    action, config = m.handle_click(m.start_rect.center)
+    assert action == "start"
+    assert config.mass_split is True
+
+    fresh = Menu(_SCREEN)
+    assert fresh.collapse_mode == CollapseMode.PARTIAL
+    assert fresh.splitting_enabled is True
+    assert fresh.mass_movement is True
+    assert fresh.mass_split is True
+    assert fresh.theme_name == "cyberpunk"
+    assert fresh.white_name == "Alice"
+    assert fresh.black_name == "Bob"
+
+
+def test_resume_from_in_game_settings_also_remembers_settings(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    m = Menu(_SCREEN, in_game=True, initial_config=GameConfig())
+    m.mass_movement = True
+    action, config = m.handle_click(m.resume_rect.center)
+    assert action == "resume"
+    assert config.mass_movement is True
+
+    fresh = Menu(_SCREEN)
+    assert fresh.mass_movement is True
+
+
+def test_fresh_menu_falls_back_to_team_save_when_no_last_settings_exist(tmp_path, monkeypatch):
+    """Backward compatible with a pre-existing teams.json (cosmetics only, no
+    dials) from before this feature existed."""
+    monkeypatch.chdir(tmp_path)
+    saver = Menu(_SCREEN)
+    saver.theme_name = "cyberpunk"
+    saver.white_name = "Alpha"
+    saver._save_teams()
+
+    fresh = Menu(_SCREEN)
+    assert fresh.theme_name == "cyberpunk"
+    assert fresh.white_name == "Alpha"
+    assert fresh.mass_movement is False   # no last-settings file -- dials stay hardcoded
+
+
 # --------------------------------------------------------------- in-game settings
 def test_open_settings_via_panel_button_and_via_o_key():
     app = _new_app()
@@ -503,7 +625,8 @@ def test_settings_keydown_routes_text_entry_to_the_menu_not_game_hotkeys():
     assert app.mode == "move"                          # not treated as the (M) hotkey
 
 
-def test_settings_resume_applies_changes_without_resetting_the_board():
+def test_settings_resume_applies_changes_without_resetting_the_board(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)   # Resume now also auto-saves last-settings -- keep it out of the repo
     app = _new_app()
     _click(app, chess.E2)
     _click(app, chess.E4)
@@ -524,7 +647,8 @@ def test_settings_resume_applies_changes_without_resetting_the_board():
     assert app.log[:-1] == log_before                  # only the "updated" note appended
 
 
-def test_settings_new_game_resets_the_board_with_the_edited_config():
+def test_settings_new_game_resets_the_board_with_the_edited_config(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)   # New Game now also auto-saves last-settings -- keep it out of the repo
     app = _new_app()
     _click(app, chess.E2)
     _click(app, chess.E4)

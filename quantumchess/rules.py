@@ -77,6 +77,30 @@ class MassMove:
     promotions: tuple[tuple[int, int], ...] = ()
 
 
+@dataclass(frozen=True)
+class MassSplit:
+    """Move *or split* every ghost of one superposed piece in a single planned
+    turn -- the optional "mass split" dial (requires ``mass_movement``; see
+    ``collapse.resolve_mass_split`` and CLAUDE.md).
+
+    ``legs`` is one ``(from_square, destinations)`` per current ghost of the
+    piece, where ``destinations`` is a tuple of **one** square (that ghost just
+    relocates, exactly like a ``MassMove`` leg -- ``to == from`` means "stay")
+    or **two distinct** squares (that ghost *splits* into two ``p/2`` halves).
+    This is the strict generalization of ``MassMove``: a plan whose every leg
+    has a single destination resolves identically.
+
+    Like a mass move, the whole piece's conflicts are settled by *one*
+    measurement over the resulting halves (which sum to 1), rather than
+    collapsing each ghost. ``promotions`` (``(from_square, to_square,
+    promotion_ptype)`` triples) records the piece a promoting pawn *branch*
+    becomes -- keyed by both squares since a single ghost can split into two
+    promoting destinations that each need their own choice."""
+    piece_id: int
+    legs: tuple[tuple[int, tuple[int, ...]], ...]
+    promotions: tuple[tuple[int, int, int], ...] = ()
+
+
 # --------------------------------------------------------------------- oracle
 def _solids_board(qb: QuantumBoard) -> chess.Board:
     """A python-chess board holding only the solid (certain) pieces."""

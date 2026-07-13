@@ -47,10 +47,12 @@ really was.
   never superposed by this: it always makes one plain, deterministic
   relocation alongside whichever branch reaches the castle square, exactly
   mirroring a full-move castle's "rook follows only if the walk completes."
-- Deferred dials (documented, not yet built): all-ghosts *split*, symmetric
-  all-ghosts move, equal-`1/n` probabilities, exotic promotion/en-passant
-  interactions. (The **independent** all-ghosts *move* variant shipped
-  2026-07-11 as the `mass_movement` dial — see `resolve_mass_move`.)
+- Deferred dials (documented, not yet built): symmetric all-ghosts move,
+  equal-`1/n` probabilities, exotic promotion/en-passant interactions. (The
+  **independent** all-ghosts *move* variant shipped 2026-07-11 as the
+  `mass_movement` dial — see `resolve_mass_move`. The **all-ghosts split**
+  variant shipped 2026-07-13 as the `mass_split` dial layered on top of it —
+  each ghost in a mass turn may move *or* split; see `resolve_mass_split`.)
 
 ## Architecture
 - **Engine is headless** — `quantumchess/` must not import `pygame`. UI is a thin
@@ -83,6 +85,17 @@ really was.
   candidates — the player picks it per leg in the UI (same promotion picker as a
   single move), defaulting to a queen only if unspecified. Resolution lives in
   `collapse.resolve_mass_move`.
+  **Mass split** (added 2026-07-13): `MassSplit(piece_id, legs, promotions)` is
+  the strict generalization of `MassMove` for the `mass_split` dial — `legs` is
+  one `(from_square, destinations)` per current ghost where `destinations` is a
+  tuple of **one** square (that ghost relocates, `to == from` = stay, exactly a
+  `MassMove` leg) or **two distinct** squares (that ghost *splits* into two
+  `p/2` halves). `promotions` here is keyed by both squares
+  (`(from_square, to_square, ptype)` triples) since a single ghost can split
+  into two promoting destinations that each need their own pick. Each leg still
+  goes through `mass_assignment_move` for classification. Resolution lives in
+  `collapse.resolve_mass_split`, which reuses the same single-measurement core
+  as a mass move (a split just contributes extra half-probability legs).
   **Castling** (added 2026-07-11, user asked "should I be able to castle here?"
   after a playtest reached a position where it should be legal): `Move` gained
   `castle_rook: Optional[tuple[rook_piece_id, rook_from, rook_to]]`, set only on
@@ -148,7 +161,11 @@ really was.
   `game.py` for convenience. Carries `mass_movement: bool = False` (added
   2026-07-11) — the optional dial enabling whole-superposition moves; enforced
   at the UI layer (`App.can_mass`) like `splitting_enabled`, since the engine's
-  `resolve_mass_move` is dial-agnostic. Also carries the cosmetic (non-logic) match-setup
+  `resolve_mass_move` is dial-agnostic. Carries `mass_split: bool = False`
+  (added 2026-07-13) — the optional dial (only meaningful with `mass_movement`
+  on) letting each ghost in a mass turn *split* as well as move; likewise
+  enforced at the UI layer (`App.can_mass_split`), with `resolve_mass_split`
+  dial-agnostic. Also carries the cosmetic (non-logic) match-setup
   fields: `theme` ("origin"/"cyberpunk"), `white_name`/`black_name`,
   `white_color`/`black_color` (RGB tuples, only meaningful for cyberpunk), plus
   `team_name(color)`/`team_color(color)` helpers keyed off the python-chess
@@ -248,6 +265,24 @@ really was.
   real square while the losers fade). Provably reduces to today's single move
   (move one ghost, hold the rest) in both modes: `P(solid at s) = p_s` either
   way. Headless; covered by `tests/test_mass_move.py`.
+  `resolve_mass_split` (added 2026-07-13, for the `mass_split` dial — user:
+  "if mass move is on ... a toggle to turn on/off mass split too — when on, I
+  can split multiple ghosts, each ghost has an option to move or split") is the
+  generalization: a ghost with a single-destination leg relocates exactly like
+  a mass-move leg, a two-destination leg splits that ghost's probability in half
+  across the two. The `resolve_mass_move` internals were refactored into
+  `_classify_mass_entry` (one leg → a classified `_MassEntry`) + a shared
+  `_resolve_mass_entries` core (roll among the entries, whose probs sum to 1;
+  the exact same no-conflict / safe-dodge (PARTIAL/FULL) / conflict-win
+  branches). `resolve_mass_move` builds one entry per assignment; `resolve_mass_split`
+  builds one **or two** (half-prob each) per leg — so a mass split whose every
+  leg is single is byte-for-byte a mass move (asserted in
+  `tests/test_mass_split.py`). `MassMoveResolution` gained `chosen_to` (the
+  winning leg's *intended* destination, = `final_square` unless a CONTACT slide
+  stopped short) so the UI can tell the winning branch apart from a *sibling*
+  branch of the same source ghost when a split sent one source to two squares.
+  Same single-measurement guarantee — `P(solid at s) = mass at s` — so it too
+  reduces to today's single move. Headless; covered by `tests/test_mass_split.py`.
 - `check.py` — **advisory** check-probability overlay (added 2026-07-11, user
   asked for an interface to "signal check and partial check, like 3/8 to be a
   check" plus a warning before a move exposes their own king). Purely
@@ -335,6 +370,18 @@ really was.
   straight from the menu's own fields (plain kwargs, not a `GameConfig`) so it
   stays pygame-free; colours come back as `(r,g,b)` tuples. Added 2026-07-11
   per the user's ask for a save/load-teams button.
+  `save_last_settings`/`load_last_settings` (added 2026-07-13, own
+  `LAST_SETTINGS_FORMAT_VERSION`, single slot `saves/last_settings.json`) is a
+  *superset* of the teams round-trip that also carries every dial
+  (`collapse_mode`/`splitting_enabled`/`mass_movement`/`mass_split`) — written
+  automatically (not on an explicit button) by `Menu._finalize` every time
+  Start/New Game/Resume is clicked, and loaded automatically by
+  `Menu._load_startup_defaults` when a fresh pre-game menu opens, so the whole
+  menu reopens exactly as it was last left with no save step to remember.
+  Deliberately does **not** carry the seed — every match still gets a fresh
+  random one. `load_last_settings` reads every field via `.get(..., default)`
+  off a throwaway `GameConfig()`, a grow-only schema like the teams file (no
+  `version` bump as new dials are added).
 - `ui/` — pygame layer (Milestone 4). **The only place that imports pygame** —
   never import it from the engine modules above.
   - **Graphics overhaul (added 2026-07-12)** — user asked to make the game less
@@ -611,24 +658,49 @@ really was.
     — resets the board with the edited dials, exactly like starting over from
     the pre-game menu.
     **Mass-move planning** (added 2026-07-11, `mass_movement` dial): when the
-    dial is on, clicking a *superposed* own piece in move mode opens planning
-    instead of a one-click move (a solid piece still moves in one click —
-    planning only makes sense for >1 ghost). `self.plan` maps every ghost's
-    source square → its chosen destination (all default to "stay"),
+    dial is on, clicking a *superposed* own piece opens planning instead of an
+    ordinary one-click move/split (a solid piece still moves/splits the
+    ordinary way — planning only makes sense for >1 ghost). This is
+    independent of the top-level Move/Split toggle (fixed 2026-07-13 — user
+    report: "I turn on split, move one ghost and the turn ends, I didn't get
+    a chance to split the second ghost" — the original check required
+    `mode == "move"` to enter planning, so a player who switched to Split
+    mode first, expecting that to be how you split *multiple* ghosts, instead
+    fell through to an ordinary single-ghost split and lost the turn after
+    touching only one ghost). `_begin_plan` also resets `self.mode` to
+    `"move"` on entry, since the toggle has no meaning once inside planning
+    and would otherwise keep showing a stale "SPLIT" label on the panel.
+    `self.plan` maps every ghost's
+    source square → a **tuple** of its chosen destination(s) (all default to
+    `(source,)` = "stay"; one square = relocate, or — only with the `mass_split`
+    dial on — two distinct squares = that ghost splits in half),
     `self.plan_active` is the ghost being aimed, `self.plan_piece` the piece.
     `_handle_plan_click` cycles select-ghost → pick-target (or click the ghost
     again to hold); `plan_legal()` gives the active ghost's targets in the
     skin's own highlight style (a `CAPTURE_SOLID` is tagged risky, like split,
     since a mass leg's mover isn't guaranteed present). Aiming a ghost *pawn* at
     the promotion rank pops the ordinary promotion picker (`_pending_plan_promo`
-    holds the leg until a piece is clicked; `plan_promo[from]` records the
-    choice, cleared if that ghost is later re-aimed) so promotions are chosen,
-    not auto-queened. Confirm (a floating
-    `render.mass_controls_rects()` button over the board, or `Enter`) →
-    `_confirm_plan` builds the `MassMove`, calls `collapse.resolve_mass_move`,
-    logs it (`theme.TERMS['mass_verb']`/`'mass_collapse_clause'`), and animates
-    every moving ghost sliding out (winner lands solid, losers fade — same
-    `build_animation` path as a split's branches). Cancel (floating button /
+    holds the leg until a piece is clicked; `plan_promo[(from, to)]` records the
+    choice per branch, pruned via `_prune_promos` if that ghost is later
+    re-aimed) so promotions are chosen, not auto-queened.
+    **Mass split** (added 2026-07-13, `mass_split` dial layered on
+    `mass_movement`): `App.can_mass_split()`/`_plan_cap()` raise each ghost's
+    destination cap from 1 to 2. Splitting a ghost reuses the top-level
+    split-mode two-pick gesture, per ghost: `self.plan_pick_a` holds the first
+    branch chosen for the active ghost (like `split_pick_a`); clicking a
+    *second* square commits a split into both (`plan[from] = (a, b)`), clicking
+    the *first square again* commits a plain single move, and clicking the
+    ghost's own square first still holds it. `_commit_plan_branch` centralizes
+    "record this branch" for both first/second and cap-1/cap-2. Escape backs out
+    the in-progress ghost assignment first, then the whole plan. Confirm (a
+    floating `render.mass_controls_rects()` button over the board, or `Enter`) →
+    `_confirm_plan` builds a `MassMove` (every leg single, `resolve_mass_move`)
+    or a `MassSplit` (`resolve_mass_split`, when the dial is on), logs it
+    (`theme.TERMS['mass_verb']`/`'mass_split_verb'`/`'mass_collapse_clause'`),
+    and animates every moving branch sliding out (the winning branch — matched
+    by `result.chosen_from`+`chosen_to` so a split's sibling isn't confused for
+    it — lands solid, losers fade; same `build_animation` path as a split's
+    branches). Cancel (floating button /
     `Escape`) or switching to split mode abandons the plan; the plan is
     transient UI state (not persisted, cleared by `new_game`/`load_from`).
     Planning is skin-agnostic — drawn centrally in `BaseSkin.draw`'s
@@ -659,12 +731,22 @@ really was.
     (confirm-then-fire, ported from the retired classic path so removing it
     didn't silently drop the feature) in the same pass.
   - `menu.py` — pre-game dial picker (collapse mode, splitting on/off, mass
-    moves on/off, seed, board theme, team names, team colours). The "Mass
-    moves" toggle (`mass_toggle_rect`, beside "Splitting", added 2026-07-11)
-    feeds `GameConfig.mass_movement` through `_build_config`/`initial_config`
-    the same way splitting does. `splitting_enabled` is enforced at
-    this UI layer (`App.toggle_mode`), not inside the engine — the engine's
-    split functions are dial-agnostic by design. Team-name fields are simple
+    moves on/off, mass split on/off, seed, board theme, team names, team
+    colours). The "Splitting"/"Mass moves"/"Mass split" toggle row is laid out
+    **dynamically** (`Menu._dial_specs`/`_dial_rects`, reworked 2026-07-13 —
+    user: "when some option is not available, it should be hidden"): each
+    toggle is only included at all once its prerequisite dial is on (mass
+    moves needs splitting; mass split needs mass moves), so with a dial off the
+    ones that depend on it simply **aren't drawn or clickable**, not just
+    dimmed — the row's rects (and its centering) are recomputed on every
+    `handle_click`/`draw` call rather than fixed in `__init__`, since how many
+    buttons exist depends on the current state. Toggling a dial off also
+    cascades the reset onto anything that depends on it (turning Splitting off
+    clears `mass_movement`/`mass_split` too; turning Mass moves off clears
+    `mass_split`), and `_build_config` re-applies the same AND-gating
+    defensively in case a loaded config had them out of sync. `splitting_enabled`
+    is enforced at this UI layer (`App.toggle_mode`), not inside the engine —
+    the engine's split functions are dial-agnostic by design. Team-name fields are simple
     click-to-focus text inputs (`Menu.active_field` + `handle_keydown`, wired
     from `main.py`'s menu loop since the mouse-only loop never forwarded
     `KEYDOWN` before); team-colour pickers are `theme.SWATCHES` swatches,
@@ -687,12 +769,30 @@ really was.
     (`Menu._swap_teams`) — since white always moves first, this is how
     players pick who starts without retyping both names. Added 2026-07-11
     per the user's ask for a way to switch who starts.
+    **Remembering the last-used settings** (added 2026-07-13, user: "make the
+    game remember last settings and load them when app starts"): distinct from
+    the explicit Save/Load Teams profile above (a named look a player returns
+    to on purpose), this is automatic and covers every dial too, not just
+    cosmetics. `Menu._finalize(action)` — now what `handle_click` calls instead
+    of returning `(action, self._build_config())` directly for the
+    Start/New-Game/Resume buttons — builds the config, calls
+    `persistence.save_last_settings(LAST_SETTINGS_PATH, config)` (best-effort;
+    an `OSError` is swallowed so a failed remember can't block starting the
+    game), then returns the tuple exactly as before. `Menu.__init__`'s
+    pre-game branch calls the new `_load_startup_defaults()` instead of
+    `_load_teams(startup=True)` directly: it tries `load_last_settings` first
+    (every dial + cosmetic field) and only falls back to `_load_teams` (the
+    older, cosmetics-only path) if no last-settings file exists yet — so a
+    fresh app launch reopens the menu exactly as it was last left, with no
+    save button to remember to click. The seed is deliberately excluded from
+    both sides of this round-trip (see `persistence.py` above) — every match
+    still starts from a fresh random seed.
     **Reused mid-game as the Settings screen** (added 2026-07-11, see
     `app.py`'s in-game Settings writeup above): `Menu.__init__` gained
     `in_game: bool = False` and `initial_config: Optional[GameConfig] = None`.
     `initial_config`, when given, seeds every field from it instead of
-    calling `_load_teams(startup=True)` — Settings opens showing the match's
-    own current dials, not the last saved team file. `in_game` draws the
+    calling `_load_startup_defaults()` — Settings opens showing the match's
+    own current dials, not the last remembered/saved setup. `in_game` draws the
     title as "Settings" instead of "Match Setup" and adds a `resume_rect`
     button ("Resume Game") beside the existing Start button (relabeled "New
     Game"); pre-game (`in_game=False`) `resume_rect` is `None` and Start stays
@@ -736,7 +836,7 @@ really was.
 - Demo (M1 random game): `python demo_m1.py [seed]`
 - Demo (M2 superposition): `python demo_m2.py`
 - Demo (M3 collapse): `python demo_m3.py [seed]` — try seeds 1-5, each gives a different outcome
-- Tests: `python -m pytest -q`  (173 passing). UI tests need `SDL_VIDEODRIVER=dummy` in
+- Tests: `python -m pytest -q`  (208 passing). UI tests need `SDL_VIDEODRIVER=dummy` in
   the environment (set automatically at the top of `test_m4_ui.py`, but harmless to
   also export it yourself: `SDL_VIDEODRIVER=dummy python -m pytest -q`).
 - `HOW_TO_PLAY.md` (repo root) — player-facing rules/controls guide for the user and their friend.
@@ -1023,6 +1123,65 @@ really was.
       unknown-set fallback, SVG rasterization, neon recolour to the side colour,
       shadow/glow padding, and revision-keyed caching; `test_persistence.py`
       gained `piece_set` round-trip + old-file-fallback coverage).
+      Later **2026-07-13**, the **mass split** dial landed (user: "if mass move
+      is on, I would like a toggle to turn on/off mass split too — when on, I
+      can split multiple ghosts, each ghost has an option to move or split") —
+      see `config.py`/`rules.py` (`MassSplit`)/`collapse.py`
+      (`resolve_mass_split`, sharing a refactored `_resolve_mass_entries` core
+      with mass move)/`menu.py` (a third "Mass split" toggle, gated on mass
+      moves)/`app.py` (planning `self.plan` values became destination tuples;
+      the per-ghost two-pick split gesture via `self.plan_pick_a`, mirroring
+      top-level split mode) writeups above for the full mechanism. It's the
+      strict generalization of mass movement — a mass-split turn with no actual
+      splits resolves byte-for-byte like a mass move — and obeys the same
+      single-measurement / collapse-mode semantics. 194 tests passing
+      (`tests/test_mass_split.py` covers the engine — single-leg equivalence to
+      mass move, a ghost fanning into two halves, merge-by-destination, a split
+      branch capturing/dodging under PARTIAL/FULL, promotion, king capture, and
+      validation; `tests/test_mass_split_ui.py` drives the two-pick split
+      gesture, single-vs-split commit, staying branches, per-branch promotion,
+      and Escape back-out headlessly; `test_persistence.py` gained `mass_split`
+      round-trip). The floating Confirm/Cancel controls overlap the board's
+      bottom-rank squares (a pre-existing mass-move quirk, unchanged).
+      Later the same day, two menu-polish requests landed together: (1) a
+      **hidden-when-unavailable** dial row (user: "when some option is not
+      available, it should be hidden (like mass split without mass move or
+      mass move without split)") — the fixed 3-button toggle row became
+      `Menu._dial_specs`/`_dial_rects`, computed live so a toggle whose
+      prerequisite dial is off is neither drawn nor clickable, with the row
+      re-centering itself around however many buttons remain; and (2)
+      **automatic settings memory** (user: "make the game remember last
+      settings and load them when app starts") — `persistence.save_last_settings`/
+      `load_last_settings` round-trip every dial *and* cosmetic field (deliberately
+      excluding the seed) to `saves/last_settings.json`, written by the new
+      `Menu._finalize` on every Start/New-Game/Resume click and read by the new
+      `Menu._load_startup_defaults` when a fresh pre-game menu opens (falling
+      back to the older cosmetics-only `_load_teams` for a first run before
+      anything's been auto-saved). See `persistence.py`/`menu.py` writeups
+      above for the full mechanism. 206 tests passing (`test_persistence.py`
+      gained the last-settings round-trip/fallback/version-check tests;
+      `test_m4_ui.py` gained dial-visibility, cascading-reset, and
+      remember-on-start/resume coverage — two pre-existing settings tests
+      needed `monkeypatch.chdir(tmp_path)` added since Resume/New-Game now
+      also touch disk).
+      Later the same day, a playtest bug report ("I turn on split, move one
+      ghost and the turn ends, I didn't get a chance to split the second
+      ghost") turned up a real interaction bug in mass-move/mass-split
+      planning: entering planning (`app.py::handle_mouse_down`) required
+      `self.mode == "move"`, so a player who toggled to Split mode *first*
+      (a natural thing to try when you specifically want to split multiple
+      ghosts) had their click fall through to an ordinary one-ghost split
+      instead — which, per the "a turn = one action on one ghost" rule, ends
+      the turn immediately, before the other ghost(s) can be touched at all.
+      Fixed by dropping the mode check entirely: selecting a superposed piece
+      always opens planning when the mass-movement dial is on, regardless of
+      which mode was active; `_begin_plan` now also resets `self.mode` back to
+      `"move"` so the panel's Mode button doesn't keep showing a stale
+      "SPLIT" label for the duration of the plan (mode has no meaning once
+      inside it). 208 tests passing (`test_mass_move_ui.py`/
+      `test_mass_split_ui.py` gained regression coverage entering planning
+      from Split mode, including the exact two-ghost split-and-move sequence
+      from the bug report).
 - [ ] **M5** — (menu dials already landed in M4; this milestone folds into it —
       remaining polish items only, e.g. richer dial explanations in-menu).
 - [ ] **M6** — polish pass (see below for what's left).
