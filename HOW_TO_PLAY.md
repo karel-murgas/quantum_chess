@@ -25,17 +25,22 @@ You'll see a setup menu first:
     still add up to 1.
 - **Splitting: On/Off.** Turns the whole superposition mechanic on or off. Off
   gives you ordinary chess.
-- **Mass moves: On/Off.** When on, a piece that's already in superposition can
-  move *all* of its ghosts at once in a single planned turn (see
+- **Mass moves: On/Off.** *(Only shown when Splitting is on — it has nothing to
+  do without superposition.)* When on, a piece that's already in superposition
+  can move *all* of its ghosts at once in a single planned turn (see
   [Mass moves](#mass-moves-moving-a-whole-superposition-at-once) below), instead
   of only moving/splitting one ghost. Off by default.
-- **Mass split: On/Off.** *(Only selectable when Mass moves is on.)* Extends a
+- **Mass split: On/Off.** *(Only shown when Mass moves is on.)* Extends a
   mass-move turn so each ghost may either **move** to one square or **split**
   into two. Off by default. See
   [Mass moves](#mass-moves-moving-a-whole-superposition-at-once) below.
+
+  Turning a dial off also turns off (and hides) anything that depends on it —
+  e.g. turning Splitting off hides *and* clears Mass moves and Mass split.
 - **Seed.** Controls the random number generator behind every collapse. Click
   "Reroll seed" for a different one; write down a seed if you want to replay
-  the exact same sequence of dice rolls later.
+  the exact same sequence of dice rolls later. (The seed always starts fresh —
+  it's the one setting that's deliberately *not* remembered between sessions.)
 - **Board theme — Origin / Cyberpunk.** Origin is the classic wood board;
   Cyberpunk is a neon-on-dark look you can tint with each team's colour (and it
   reskins the side-log wording). Cyberpunk also gets a subtle vignette.
@@ -48,10 +53,20 @@ You'll see a setup menu first:
   that team's colour, so you can see the look before you pick.
 - **Team names & colours.** Name each side and (Cyberpunk) pick an accent
   colour; the "⇄" swaps who plays White (White always moves first). "Save
-  Teams" / "Load Teams" remembers a favourite theme + set + names + colours.
+  Teams" / "Load Teams" lets you name and reuse a favourite
+  theme + set + names + colours on demand.
 
 Click **Start Game**. The window is resizable, and **F11** toggles fullscreen —
 the board scales smoothly to fit, staying crisp.
+
+**The menu remembers itself automatically**, too: every dial and cosmetic
+choice (collapse mode, splitting/mass moves/mass split, theme, piece sets,
+names, colours) is saved the moment you click Start Game (or, mid-match,
+New Game / Resume in Settings) and reloaded the next time you open the menu —
+no button to click, nothing to lose by forgetting to save. This is separate
+from the explicit "Save Teams" / "Load Teams" profile above: that one is a
+named look you return to on purpose; this one just keeps whatever you last
+actually played with. The seed is the one exception — it always rerolls fresh.
 
 ## The board
 

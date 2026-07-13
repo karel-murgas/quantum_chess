@@ -192,3 +192,64 @@ def load_teams(path) -> dict[str, Any]:
         "white_color": tuple(data["white_color"]),
         "black_color": tuple(data["black_color"]),
     }
+
+
+# --- Last-used settings (menu-layer, all dials + cosmetics) ----------------
+#
+# Separate from "team setup" above: that one is an explicit, named profile a
+# player saves/loads on demand. This one is written automatically -- every
+# time a game is actually started/resumed/restarted (see Menu._finalize) --
+# so a fresh app launch reopens the pre-game menu exactly as it was last left,
+# with no save button to remember to click. Covers every dial (collapse mode,
+# splitting, mass movement, mass split) plus the same cosmetic fields as a
+# team setup. Headless/pygame-free like the rest of this module.
+
+LAST_SETTINGS_FORMAT_VERSION = 1
+
+
+def save_last_settings(path, config: GameConfig) -> None:
+    data = {
+        "version": LAST_SETTINGS_FORMAT_VERSION,
+        "collapse_mode": config.collapse_mode.value,
+        "splitting_enabled": config.splitting_enabled,
+        "mass_movement": config.mass_movement,
+        "mass_split": config.mass_split,
+        "theme": config.theme,
+        "white_piece_set": config.white_piece_set,
+        "black_piece_set": config.black_piece_set,
+        "white_name": config.white_name,
+        "black_name": config.black_name,
+        "white_color": list(config.white_color),
+        "black_color": list(config.black_color),
+    }
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def load_last_settings(path) -> dict[str, Any]:
+    """Return {collapse_mode, splitting_enabled, mass_movement, mass_split,
+    theme, white_piece_set, black_piece_set, white_name, black_name,
+    white_color, black_color}. Raises ``ValueError`` on an unrecognized format
+    version, like ``load_game``/``load_teams``. Every field falls back to the
+    ``GameConfig`` default via ``.get(...)`` (a grow-only schema, no version
+    bump needed as new dials are added), so an older last-settings file still
+    loads -- it just leaves any newer dial at its default."""
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    version = data.get("version")
+    if version != LAST_SETTINGS_FORMAT_VERSION:
+        raise ValueError(f"unsupported last-settings format version: {version!r}")
+    default = GameConfig()
+    return {
+        "collapse_mode": CollapseMode(data.get("collapse_mode", default.collapse_mode.value)),
+        "splitting_enabled": data.get("splitting_enabled", default.splitting_enabled),
+        "mass_movement": data.get("mass_movement", default.mass_movement),
+        "mass_split": data.get("mass_split", default.mass_split),
+        "theme": data.get("theme", default.theme),
+        "white_piece_set": data.get("white_piece_set", default.white_piece_set),
+        "black_piece_set": data.get("black_piece_set", default.black_piece_set),
+        "white_name": data.get("white_name", default.white_name),
+        "black_name": data.get("black_name", default.black_name),
+        "white_color": tuple(data.get("white_color", default.white_color)),
+        "black_color": tuple(data.get("black_color", default.black_color)),
+    }

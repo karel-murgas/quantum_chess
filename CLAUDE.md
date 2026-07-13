@@ -370,6 +370,18 @@ really was.
   straight from the menu's own fields (plain kwargs, not a `GameConfig`) so it
   stays pygame-free; colours come back as `(r,g,b)` tuples. Added 2026-07-11
   per the user's ask for a save/load-teams button.
+  `save_last_settings`/`load_last_settings` (added 2026-07-13, own
+  `LAST_SETTINGS_FORMAT_VERSION`, single slot `saves/last_settings.json`) is a
+  *superset* of the teams round-trip that also carries every dial
+  (`collapse_mode`/`splitting_enabled`/`mass_movement`/`mass_split`) — written
+  automatically (not on an explicit button) by `Menu._finalize` every time
+  Start/New Game/Resume is clicked, and loaded automatically by
+  `Menu._load_startup_defaults` when a fresh pre-game menu opens, so the whole
+  menu reopens exactly as it was last left with no save step to remember.
+  Deliberately does **not** carry the seed — every match still gets a fresh
+  random one. `load_last_settings` reads every field via `.get(..., default)`
+  off a throwaway `GameConfig()`, a grow-only schema like the teams file (no
+  `version` bump as new dials are added).
 - `ui/` — pygame layer (Milestone 4). **The only place that imports pygame** —
   never import it from the engine modules above.
   - **Graphics overhaul (added 2026-07-12)** — user asked to make the game less
@@ -710,17 +722,21 @@ really was.
     didn't silently drop the feature) in the same pass.
   - `menu.py` — pre-game dial picker (collapse mode, splitting on/off, mass
     moves on/off, mass split on/off, seed, board theme, team names, team
-    colours). The "Mass moves" toggle (`mass_toggle_rect`, beside "Splitting",
-    added 2026-07-11)
-    feeds `GameConfig.mass_movement` through `_build_config`/`initial_config`
-    the same way splitting does. The "Mass split" toggle
-    (`mass_split_toggle_rect`, third on the same row, added 2026-07-13) feeds
-    `GameConfig.mass_split` the same way, but is **only meaningful with mass
-    moves on**: it's drawn disabled (dim, via `_button`'s new `enabled` arg) and
-    ignores clicks until then, `_build_config` `and`s it with `mass_movement`,
-    and turning mass moves *off* clears it. `splitting_enabled` is enforced at
-    this UI layer (`App.toggle_mode`), not inside the engine — the engine's
-    split functions are dial-agnostic by design. Team-name fields are simple
+    colours). The "Splitting"/"Mass moves"/"Mass split" toggle row is laid out
+    **dynamically** (`Menu._dial_specs`/`_dial_rects`, reworked 2026-07-13 —
+    user: "when some option is not available, it should be hidden"): each
+    toggle is only included at all once its prerequisite dial is on (mass
+    moves needs splitting; mass split needs mass moves), so with a dial off the
+    ones that depend on it simply **aren't drawn or clickable**, not just
+    dimmed — the row's rects (and its centering) are recomputed on every
+    `handle_click`/`draw` call rather than fixed in `__init__`, since how many
+    buttons exist depends on the current state. Toggling a dial off also
+    cascades the reset onto anything that depends on it (turning Splitting off
+    clears `mass_movement`/`mass_split` too; turning Mass moves off clears
+    `mass_split`), and `_build_config` re-applies the same AND-gating
+    defensively in case a loaded config had them out of sync. `splitting_enabled`
+    is enforced at this UI layer (`App.toggle_mode`), not inside the engine —
+    the engine's split functions are dial-agnostic by design. Team-name fields are simple
     click-to-focus text inputs (`Menu.active_field` + `handle_keydown`, wired
     from `main.py`'s menu loop since the mouse-only loop never forwarded
     `KEYDOWN` before); team-colour pickers are `theme.SWATCHES` swatches,
@@ -743,12 +759,30 @@ really was.
     (`Menu._swap_teams`) — since white always moves first, this is how
     players pick who starts without retyping both names. Added 2026-07-11
     per the user's ask for a way to switch who starts.
+    **Remembering the last-used settings** (added 2026-07-13, user: "make the
+    game remember last settings and load them when app starts"): distinct from
+    the explicit Save/Load Teams profile above (a named look a player returns
+    to on purpose), this is automatic and covers every dial too, not just
+    cosmetics. `Menu._finalize(action)` — now what `handle_click` calls instead
+    of returning `(action, self._build_config())` directly for the
+    Start/New-Game/Resume buttons — builds the config, calls
+    `persistence.save_last_settings(LAST_SETTINGS_PATH, config)` (best-effort;
+    an `OSError` is swallowed so a failed remember can't block starting the
+    game), then returns the tuple exactly as before. `Menu.__init__`'s
+    pre-game branch calls the new `_load_startup_defaults()` instead of
+    `_load_teams(startup=True)` directly: it tries `load_last_settings` first
+    (every dial + cosmetic field) and only falls back to `_load_teams` (the
+    older, cosmetics-only path) if no last-settings file exists yet — so a
+    fresh app launch reopens the menu exactly as it was last left, with no
+    save button to remember to click. The seed is deliberately excluded from
+    both sides of this round-trip (see `persistence.py` above) — every match
+    still starts from a fresh random seed.
     **Reused mid-game as the Settings screen** (added 2026-07-11, see
     `app.py`'s in-game Settings writeup above): `Menu.__init__` gained
     `in_game: bool = False` and `initial_config: Optional[GameConfig] = None`.
     `initial_config`, when given, seeds every field from it instead of
-    calling `_load_teams(startup=True)` — Settings opens showing the match's
-    own current dials, not the last saved team file. `in_game` draws the
+    calling `_load_startup_defaults()` — Settings opens showing the match's
+    own current dials, not the last remembered/saved setup. `in_game` draws the
     title as "Settings" instead of "Match Setup" and adds a `resume_rect`
     button ("Resume Game") beside the existing Start button (relabeled "New
     Game"); pre-game (`in_game=False`) `resume_rect` is `None` and Start stays
@@ -792,7 +826,7 @@ really was.
 - Demo (M1 random game): `python demo_m1.py [seed]`
 - Demo (M2 superposition): `python demo_m2.py`
 - Demo (M3 collapse): `python demo_m3.py [seed]` — try seeds 1-5, each gives a different outcome
-- Tests: `python -m pytest -q`  (194 passing). UI tests need `SDL_VIDEODRIVER=dummy` in
+- Tests: `python -m pytest -q`  (206 passing). UI tests need `SDL_VIDEODRIVER=dummy` in
   the environment (set automatically at the top of `test_m4_ui.py`, but harmless to
   also export it yourself: `SDL_VIDEODRIVER=dummy python -m pytest -q`).
 - `HOW_TO_PLAY.md` (repo root) — player-facing rules/controls guide for the user and their friend.
@@ -1099,6 +1133,27 @@ really was.
       and Escape back-out headlessly; `test_persistence.py` gained `mass_split`
       round-trip). The floating Confirm/Cancel controls overlap the board's
       bottom-rank squares (a pre-existing mass-move quirk, unchanged).
+      Later the same day, two menu-polish requests landed together: (1) a
+      **hidden-when-unavailable** dial row (user: "when some option is not
+      available, it should be hidden (like mass split without mass move or
+      mass move without split)") — the fixed 3-button toggle row became
+      `Menu._dial_specs`/`_dial_rects`, computed live so a toggle whose
+      prerequisite dial is off is neither drawn nor clickable, with the row
+      re-centering itself around however many buttons remain; and (2)
+      **automatic settings memory** (user: "make the game remember last
+      settings and load them when app starts") — `persistence.save_last_settings`/
+      `load_last_settings` round-trip every dial *and* cosmetic field (deliberately
+      excluding the seed) to `saves/last_settings.json`, written by the new
+      `Menu._finalize` on every Start/New-Game/Resume click and read by the new
+      `Menu._load_startup_defaults` when a fresh pre-game menu opens (falling
+      back to the older cosmetics-only `_load_teams` for a first run before
+      anything's been auto-saved). See `persistence.py`/`menu.py` writeups
+      above for the full mechanism. 206 tests passing (`test_persistence.py`
+      gained the last-settings round-trip/fallback/version-check tests;
+      `test_m4_ui.py` gained dial-visibility, cascading-reset, and
+      remember-on-start/resume coverage — two pre-existing settings tests
+      needed `monkeypatch.chdir(tmp_path)` added since Resume/New-Game now
+      also touch disk).
 - [ ] **M5** — (menu dials already landed in M4; this milestone folds into it —
       remaining polish items only, e.g. richer dial explanations in-menu).
 - [ ] **M6** — polish pass (see below for what's left).
