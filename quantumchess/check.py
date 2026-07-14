@@ -2,7 +2,7 @@
 
 This variant deliberately has **no** classical check / checkmate -- the king is
 an ordinary, capturable, splittable piece (locked design decision, see
-PLAN.md / CLAUDE.md). Nothing here changes that: this module is a purely
+CLAUDE.md). Nothing here changes that: this module is a purely
 *informational* overlay answering one question --
 
     "If it were the enemy's turn and they played their **single strongest

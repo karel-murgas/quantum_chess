@@ -10,14 +10,11 @@ really was.
 | Doc | What's in it |
 |---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | One-page map of every module. **Start here.** |
-| [PLAN.md](PLAN.md) | The ruleset as a spec, dials, milestones. |
-| [docs/ENGINE.md](docs/ENGINE.md) | Deep mechanics: collapse, mass move/split, castling, check, persistence. |
+| [docs/ENGINE.md](docs/ENGINE.md) | Deep mechanics: the ruleset as a spec, dials, collapse, mass move/split, castling, check, persistence. |
 | [docs/UI.md](docs/UI.md) | Deep mechanics: rendering pipeline, skins, planning UI, menu. |
-| [docs/HISTORY.md](docs/HISTORY.md) | Dated log — what shipped, why, which playtest prompted it. |
+| [docs/HISTORY.md](docs/HISTORY.md) | Dated log — what shipped, why, which playtest prompted it (includes the skin-redesign history). |
 | [HOW_TO_PLAY.md](HOW_TO_PLAY.md) | Player-facing rules/controls. |
-| [UI_REDESIGN.md](UI_REDESIGN.md) | Visual-design history of the two skins. |
 | [ONLINE_PLAY.md](ONLINE_PLAY.md) | Online play — **design only, not built.** |
-| [options.md](options.md) | The user's original design-dial brainstorm. |
 
 **Keep docs current.** A new feature updates `docs/ENGINE.md` or `docs/UI.md` (the
 mechanism) and `docs/HISTORY.md` (the dated why) — *not* this file. Only edit CLAUDE.md
@@ -32,9 +29,7 @@ Python 3.13 · **`python-chess`** (movement oracle only) · **`pygame-ce`** (UI)
 
 ```bash
 python main.py                    # play (needs a real display)
-python -m pytest -q               # 214 passing
-python demo_m1.py [seed]          # headless ASCII demos, no pygame
-python demo_m2.py ; python demo_m3.py [seed]
+python -m pytest -q               # 231 passing
 ```
 
 UI tests need `SDL_VIDEODRIVER=dummy` (set automatically at the top of `test_m4_ui.py`).
@@ -65,11 +60,15 @@ Don't silently change these — they were decided with the user.
   advisory*: it never restricts a move, it only displays how likely a king is to be
   capturable next turn.
 - **A turn = one action on one ghost**: move it, or *split* it (`p → p/2, p/2`). One split
-  branch may stay on the source square.
+  branch may stay on the source square — gated by the **`split_stay_enabled`** dial (needs
+  `splitting_enabled`; on by default).
   - The optional **`mass_movement`** dial relaxes this: a *superposed* piece may instead move
     **all** its ghosts in one planned turn, settled by a **single** categorical roll.
   - The optional **`mass_split`** dial (needs `mass_movement`) lets each ghost in such a turn
     *split* as well as move. Both are off by default and provably reduce to the single move.
+  - The optional **`mass_all_must_act`** dial (needs `mass_movement`) forbids leaving any
+    ghost at its default "stay" assignment — every ghost in the plan must move or split.
+    Off by default (a mass turn may leave some ghosts untouched).
 - **Collapse modes (match dial)** — on a *negative* measurement ("not here"):
   *Partial* only the contacted ghost vanishes and the rest renormalize; *Full* resolves the
   whole piece to one location. A *positive* measurement always collapses to solid, both modes.

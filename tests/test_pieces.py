@@ -25,7 +25,7 @@ def setup_function(_fn):
 
 def test_available_lists_all_sets_including_unicode():
     keys = [k for k, _label in pieces.available()]
-    assert set(keys) == {"cburnett", "merida", "tiger", "neon", "unicode"}
+    assert set(keys) == {"cburnett", "merida", "tiger", "cthulhu", "neon", "unicode"}
 
 
 def test_set_active_falls_back_on_unknown():
@@ -43,7 +43,7 @@ def test_set_active_is_per_side():
     assert pieces.active(chess.BLACK) == "cburnett"
 
 
-@pytest.mark.parametrize("set_name", ["cburnett", "merida", "tiger"])
+@pytest.mark.parametrize("set_name", ["cburnett", "merida", "tiger", "cthulhu"])
 def test_svg_sets_rasterize_with_content(set_name):
     art = pieces.render_art(set_name, chess.KNIGHT, chess.WHITE, 120)
     assert art.get_size() == (120, 120)
@@ -62,7 +62,8 @@ def test_neon_silhouette_uses_side_neon_colour():
 
 def _an_inked_pixel(art):
     """A fully-opaque pixel of the silhouette (its bbox centre may fall in one
-    of the tiger's stripe cutouts, which are holes)."""
+    of the art's cutouts, e.g. the tiger's stripes or cthulhu's eyes, which are
+    holes)."""
     bb = art.get_bounding_rect()
     for y in range(bb.top, bb.bottom):
         for x in range(bb.left, bb.right):
@@ -71,29 +72,32 @@ def _an_inked_pixel(art):
     raise AssertionError("silhouette has no opaque pixel")
 
 
-def test_tiger_silhouette_uses_side_team_colour():
-    # tiger is a tinted set too, but off its own bundled shapes (not cburnett's)
+@pytest.mark.parametrize("set_name", ["tiger", "cthulhu"])
+def test_tinted_own_set_silhouette_uses_side_team_colour(set_name):
+    # tiger/cthulhu are tinted sets too, but off their own bundled shapes
     for color, tint in ((chess.WHITE, theme.WHITE_NEON), (chess.BLACK, theme.BLACK_NEON)):
-        art = pieces.render_art("tiger", chess.KING, color, 120)
+        art = pieces.render_art(set_name, chess.KING, color, 120)
         r, g, b, _a = art.get_at(_an_inked_pixel(art))
         assert (r, g, b) == tint
 
 
-def test_tiger_shapes_are_the_same_for_both_sides():
+@pytest.mark.parametrize("set_name", ["tiger", "cthulhu"])
+def test_tinted_own_set_shapes_are_the_same_for_both_sides(set_name):
     # the source art has no light/dark pair -- the colour comes from the tint
-    white = pieces._raster("tiger", chess.QUEEN, chess.WHITE, 96)
-    black = pieces._raster("tiger", chess.QUEEN, chess.BLACK, 96)
+    white = pieces._raster(set_name, chess.QUEEN, chess.WHITE, 96)
+    black = pieces._raster(set_name, chess.QUEEN, chess.BLACK, 96)
     assert white.get_bounding_rect() == black.get_bounding_rect()
 
 
-def test_tiger_token_draws_a_contrast_rim():
+@pytest.mark.parametrize("set_name", ["tiger", "cthulhu"])
+def test_tinted_own_set_token_draws_a_contrast_rim(set_name):
     # a token whose tint is pale gets a dark rim outside the art's own alpha,
     # so it still reads on a light square
     theme.apply_theme("cyberpunk", (245, 245, 245), (0, 224, 255))
-    pieces.set_active("tiger")
+    pieces.set_active(set_name)
     size = 120
-    art = pieces.render_art("tiger", chess.ROOK, chess.WHITE, size)
-    tok = pieces.render_token("tiger", chess.ROOK, chess.WHITE, size)
+    art = pieces.render_art(set_name, chess.ROOK, chess.WHITE, size)
+    tok = pieces.render_token(set_name, chess.ROOK, chess.WHITE, size)
     pad = (tok.get_width() - size) // 2
 
     # find a pixel just outside the silhouette's left edge, on its centre row

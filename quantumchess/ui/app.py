@@ -69,11 +69,17 @@ class App:
         self.in_settings = False      # mid-game Settings screen open? (see open_settings)
         self.settings_menu = None     # the Menu instance driving it while open
 
+        # Piece-identity/quantum-state info popover (see handle_right_click):
+        # right-click a piece to pin a card with its full per-branch
+        # distribution -- works on any piece, own or enemy, without touching
+        # selection/move state.
+        self.pinned_square = None     # square with a right-click-pinned card, or None
+
         # Drawing skin: the whole frame (board + panel) is delegated to one of
-        # these (see ui/skins/ and UI_REDESIGN.md). Started as a 3-variant demo
-        # for playtesting; Clarity and Quantum HUD are the two that survived,
-        # and a player can switch between them live, mid-match (Tab / the
-        # "view" panel control), rather than picking once at the menu.
+        # these (see ui/skins/; design history in docs/HISTORY.md). Clarity and
+        # Quantum HUD are the two views; a player can switch between them live,
+        # mid-match (Tab / the "view" panel control), rather than picking once
+        # at the menu.
         self.skins = build_skins()
         self.skin_index = 0
         self.skin = self.skins[self.skin_index]
@@ -110,14 +116,15 @@ class App:
         that enemy (a p/2 branch capturing a certain piece isn't guaranteed),
         unlike a plain move where the mover's own presence is usually certain.
         Split mode also offers the source square itself as a destination --
-        one branch can stay put while the other moves.
+        one branch can stay put while the other moves -- unless the
+        ``split_stay_enabled`` dial has turned that off.
         """
         if self.selected is None:
             return {}
         risky = (MoveKind.CONTACT, MoveKind.CAPTURE_SOLID) if self.mode == "split" \
             else (MoveKind.CONTACT,)
         by_square = {}
-        if self.mode == "split":
+        if self.mode == "split" and self.config.split_stay_enabled:
             by_square[self.selected] = "move"
         for m in rules.ghost_destinations(self.qb, self.selected):
             tag = "merge" if m.kind == MoveKind.MERGE else (
@@ -215,13 +222,19 @@ class App:
 
     def plan_legal(self):
         """dict[to_square -> 'move'|'merge'|'contact'] for the ghost currently
-        being assigned (``plan_active``), including its own square (stay). A
-        CAPTURE_SOLID is tagged risky ('contact') like in split mode -- a mass
-        leg's mover isn't guaranteed present, so even a solid capture is a
-        gamble settled by the single roll."""
+        being assigned (``plan_active``), including its own square (stay) --
+        unless it's the *second* branch of a split and ``split_stay_enabled``
+        is off, in which case the source square is withheld as a target (a
+        move-only leg can still always hold in place; that's handled directly
+        in ``_handle_plan_click`` before this is consulted). A CAPTURE_SOLID is
+        tagged risky ('contact') like in split mode -- a mass leg's mover isn't
+        guaranteed present, so even a solid capture is a gamble settled by the
+        single roll."""
         if self.plan is None or self.plan_active is None:
             return {}
-        by_square = {self.plan_active: "move"}
+        by_square = {}
+        if not (self.plan_splitting() and not self.config.split_stay_enabled):
+            by_square[self.plan_active] = "move"
         for m in rules.ghost_destinations(self.qb, self.plan_active):
             by_square[m.to_square] = "merge" if m.kind == MoveKind.MERGE else (
                 "contact" if m.kind in (MoveKind.CONTACT, MoveKind.CAPTURE_SOLID) else "move")
@@ -382,6 +395,7 @@ class App:
 
     def cancel_selection(self):
         """Escape: back out of whatever's in progress -- never quits the app."""
+        self.pinned_square = None
         if self._confirm_quit:
             self._confirm_quit = False
         elif self._confirm_surrender:
@@ -431,6 +445,7 @@ class App:
         self.mode = "move"
         self.selected = None
         self.split_pick_a = None
+        self.pinned_square = None
         self.cancel_plan()
         self._pending_promotion = None
         self._confirm_surrender = False
@@ -462,6 +477,7 @@ class App:
         pieces.set_active(config.white_piece_set, config.black_piece_set)
         self.selected = None
         self.split_pick_a = None
+        self.pinned_square = None
         self.cancel_plan()
         self._pending_promotion = None
         self._confirm_surrender = False
@@ -508,7 +524,25 @@ class App:
         self.settings_menu = None
         self._menu_surf = None
 
+    def handle_right_click(self, pos):
+        """Right-click toggles a pinned inspector card naming the piece under
+        the cursor and its full per-branch distribution -- lets a reskinned
+        (tiger/cthulhu) token be identified and a superposed piece's cloud be
+        read at a glance. Touches no selection/move state, so it works on
+        either side's pieces without interfering with the ordinary move/split
+        gestures (which only ever fire on the left button)."""
+        if self.in_settings or self.is_animating():
+            return
+        square = render.square_at_pixel(pos)
+        if square is None or self.qb.ghost_at(square) is None:
+            self.pinned_square = None
+            return
+        self.pinned_square = None if self.pinned_square == square else square
+
     def handle_mouse_down(self, pos):
+        # A left click always means "act" -- drop any pinned info card rather
+        # than let it linger over whatever the click just changed.
+        self.pinned_square = None
         # Each skin lays its panel out differently; hit-test against the
         # active skin's own rects so clicks track whatever it drew.
         rects = self.skin.panel_rects()
@@ -727,13 +761,27 @@ class App:
         self.split_pick_a = None
         self.mode = "move"          # each new turn defaults back to move mode
 
+    def _plan_fully_acted(self) -> bool:
+        """True unless some ghost in the current plan is still sitting at its
+        default 'stay' assignment -- the gate for the ``mass_all_must_act``
+        dial. A ghost that split always counts as having acted (a split's two
+        destinations can't both equal the source -- see ``_commit_plan_branch``
+        / the re-click-cancels rule in ``_handle_plan_click``), so only a
+        single-destination leg equal to its own square fails this check."""
+        return all(not (len(dests) == 1 and dests[0] == frm)
+                  for frm, dests in self.plan.items())
+
     def _confirm_plan(self):
         """Resolve the planned mass move/split: build the ``MassMove`` (every
         leg a single move) or ``MassSplit`` (some ghost fans out into two
         branches), roll it out via ``resolve_mass_move``/``resolve_mass_split``
         (one measurement settles every conflict), log it, and animate every
         moving branch sliding out (the winning branch lands solid; the losers
-        travel as ghosts and are faded by the collapse events)."""
+        travel as ghosts and are faded by the collapse events). With
+        ``mass_all_must_act`` on, this is a no-op while any ghost hasn't been
+        assigned a real move/split -- the plan just stays open."""
+        if self.config.mass_all_must_act and not self._plan_fully_acted():
+            return
         piece_id = self.plan_piece
         label = self._piece_label(piece_id)
         color = self.qb.pieces[piece_id].color
@@ -973,6 +1021,9 @@ class App:
                         self._handle_settings_click(pos)
                     else:
                         self.handle_mouse_down(pos)
+                elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 3 \
+                        and not self.in_settings:
+                    self.handle_right_click(present.to_logical(event.pos))
 
             if self.should_quit:
                 return

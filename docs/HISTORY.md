@@ -20,7 +20,7 @@ Mechanism detail lives in [ENGINE.md](ENGINE.md) / [UI.md](UI.md); this file is 
 - [x] **M5** — folded into M4 (`ui/menu.py` covers the v1 dials).
 - [x] **M6** — polish pass; v1 playable end to end.
 
-Test count: **214 passing** (2026-07-14).
+Test count: **231 passing** (2026-07-14).
 
 ---
 
@@ -91,7 +91,7 @@ own king. Does **not** reintroduce a check rule.
 foreign ghost, including a **friendly** one (a7 "capturing" its own forked b7-pawn ghost on
 b6). `_pawn_dest` checked the occupant's colour for a *solid* blocker but not a *ghost* one.
 
-**UI redesign** (`UI_REDESIGN.md`) — explored 3 alternate visual languages live-switchable in a
+**UI redesign** — explored 3 alternate visual languages live-switchable in a
 standalone `demo_ui.py`. Concluded the same day: Polished Evolution **dropped**, **Quantum HUD**
 and **Clarity kept** as the two real views, the whole thing merged into the main game and
 `demo_ui.py` deleted. `App` itself now owns skin switching. A "Quit" button (previously only in
@@ -105,7 +105,7 @@ rook making one ordinary non-superposed move alongside whichever branch lands th
 bug was caught while building it (classify *before* setting `has_moved`).
 
 **Ghost-pawn promotion tightened** — a quiet push onto the promotion rank used to promote a mere
-*ghost* pawn unconditionally (per the original PLAN.md spec). The user asked for that ghost to be
+*ghost* pawn unconditionally (per the original spec). The user asked for that ghost to be
 measured on the spot instead: really there ⇒ promote; not there ⇒ "his problem".
 
 **In-game Settings** — the pre-game `Menu` reused mid-match (user asked to change colours/team
@@ -192,3 +192,64 @@ become a dropdown, relocated next to the team-colour swatches. Each team's picke
 list is modal in `handle_click` — checked before anything else, any click either selects an option or
 just closes it, so it can't fall through to whatever it's drawn over. Freed vertical space let Team
 names/colours move up in the menu layout.
+
+**Cthulhu piece set** — same request pattern as tiger: the user dropped `assets/cthulhu_set.png` (a
+sheet of Lovecraftian figures, green row + light-blue row) and asked for an SVG set. Traced by the new
+`tools/trace_cthulhu.py`, a trimmed copy of `trace_tiger.py` — this sheet has no separate
+tiny-pawn row to rescale from, so that step drops out entirely. Team-tinted like tiger, same contrast
+rim in `render_token`.
+
+**"Split stay" dial** — a "stay + move" split (one branch left on the source square, the other
+moved) was always allowed; the user asked for it to become a match-setup toggle instead of a fixed
+behavior. Added `GameConfig.split_stay_enabled` (default on, so existing behavior/saves are
+unchanged) and gated it purely in the UI per the usual rule: `rules.legal_split_targets` still
+always includes the source square, and `App._legal_by_square`/`plan_legal` withhold it as a pickable
+destination when the dial is off — for both an ordinary one-ghost split and a split leg inside a
+mass-split plan. Deliberately does **not** touch plain moves or a mass-move leg that isn't
+splitting — holding a ghost in place there isn't "splitting" and was never in scope for this dial.
+
+**"All ghosts must act" dial** — a follow-up to split stay: the user pointed out a mass-move/
+mass-split turn can leave some ghosts sitting untouched at their default "stay" assignment, and
+asked for an option requiring every ghost to move or split instead. Clarified via
+`AskUserQuestion` that Confirm should simply be *blocked* while any ghost hasn't acted (plan stays
+open) and that the dial should nest under Mass moves (meaningless without it), like Mass split.
+Added `GameConfig.mass_all_must_act` (default off); `App._plan_fully_acted` checks every leg and
+`_confirm_plan` no-ops while it's violated (covers both the mouse Confirm button and the `Enter`
+shortcut, since both call it); the skin dims Confirm (`render.draw_mass_controls`'s new
+`confirm_enabled`) and swaps the status hint to explain why. Composes cleanly with split stay: a
+split that leaves one branch on the source still counts as "acted" — only a bare single-destination
+"stay" leg fails the check.
+
+**Settings menu — dial tree + mouseover tooltips.** Same request: make the toggle row "visually
+nice, not just random buttons," with connecting lines showing how dials unfold, plus hover infotext.
+The flat row became a small dependency tree (`_DIAL_PARENT`, `_dial_rows`/`_dial_rects` in
+`menu.py`): each level's siblings are centered under their *own* parent's position rather than the
+whole screen, so e.g. Mass split/All must act visibly branch out from Mass moves specifically.
+`_draw_dial_tree` draws elbowed parent→child connectors before the buttons. Every section below the
+tree now reserves fixed vertical space for its tallest possible shape (3 levels) so the rest of the
+menu never jumps as dials are toggled. `_draw_hover_tooltips` maps the cursor via
+`present.to_logical(pygame.mouse.get_pos())` and shows a word-wrapped info box for whichever
+collapse-mode button or dial the mouse is over, copy pulled from flat `_DIAL_TOOLTIPS`/
+`_COLLAPSE_TOOLTIPS` dicts. Verified visually via headless PNG screenshots (`pygame.image.save` on
+the menu's offscreen surface under `SDL_VIDEODRIVER=dummy`) rather than a real display.
+
+**Piece info popover (right-click pin).** With reskinned sets (tiger, cthulhu) in play, a token's
+art no longer obviously maps to a standard piece name — the user asked for on-board infotext,
+"intuitive, decent, not cluttering," and to think through the UX before coding. First cut shipped
+two tiers (a dwell-triggered hover tooltip alongside a right-click pin), but the user asked to drop
+the hover tier and keep only the pin, plus have the pin visually ring the rest of a superposed
+piece's ghosts, not just list them in the card. Landed on: `App.handle_right_click` (wired in
+`run()` for `MOUSEBUTTONDOWN` button 3) toggles `self.pinned_square`; `BaseSkin.draw_pinned_highlight`
+rings every ghost of the pinned piece in its aura colour (`render.draw_plan_rings`'s own idiom for a
+piece being planned), drawn under the tokens in the ordinary board phase; `draw_pinned_inspector`
+then renders the fuller card — identity plus every ghost's square/probability as a bar (reusing
+`_hbar`, the same primitive Clarity's selected-piece inspector uses) — drawn last, on top of
+everything except the promotion picker. Works on **either side's** pieces at any time, unlike
+Clarity's inspector (which only ever shows your own selected piece), since right-click never
+touches selection/move state. Also asked, before building it, whether dismissing the pin on mouse
+movement would be more or less convenient: recommended against it — that's the hover-tooltip
+convention (dismiss on mouse-leave), while click-triggered popovers everywhere (GitHub hovercards,
+Figma comments, any dropdown) dismiss via click-away/Escape/toggle instead, and tying it to mouse
+movement would undo the whole point of switching from hover to click (the card would vanish while
+the mouse crosses the board toward the next move). Kept the existing dismissal set: any left click,
+Escape, new game, or load — a transient "let me peek," never persisted state.

@@ -1,8 +1,9 @@
 # Engine reference (`quantumchess/`)
 
 Deep mechanics for the headless engine. For the one-page map see
-[ARCHITECTURE.md](../ARCHITECTURE.md); for the rules as a *spec* see
-[PLAN.md](../PLAN.md); for when/why each feature landed see [HISTORY.md](HISTORY.md).
+[ARCHITECTURE.md](../ARCHITECTURE.md); for the locked design decisions and
+invariants see [CLAUDE.md](../CLAUDE.md); for when/why each feature landed see
+[HISTORY.md](HISTORY.md).
 
 **Hard rule: nothing here may import `pygame`.**
 
@@ -36,7 +37,9 @@ are only generated on request (`include_contact=True`), and `apply_move` raises
 `legal_split_targets` includes the piece's **own square** (a "stay + move" split) and
 squares that would capture/contact an enemy (splitting into an enemy square is legal
 — see `resolve_split`). `apply_split` itself stays the measurement-free fast path and
-raises if either destination needs a collapse.
+raises if either destination needs a collapse. This function stays dial-agnostic by
+design (rule 5): the `split_stay_enabled` dial that lets a player turn "stay + move"
+off is enforced in `ui/app.py` (`_legal_by_square`/`plan_legal`), not here.
 
 ### Mass movement
 
@@ -55,6 +58,12 @@ ghost relocates — exactly a `MassMove` leg) or **two distinct** squares (that 
 splits into two `p/2` halves). `promotions` is keyed by both squares
 (`(from_square, to_square, ptype)` triples) since one ghost can split into two
 promoting destinations. Legs still classify through `mass_assignment_move`.
+
+Neither `MassMove` nor `MassSplit` cares whether a leg is a "stay" (`destinations ==
+(from_square,)`) or a real move/split — that's a UI-only constraint too. The
+`mass_all_must_act` dial (every ghost must act; none may just stay) is enforced by
+`App._plan_fully_acted`/`_confirm_plan` refusing to resolve the plan at all while it's
+violated, same dial-agnostic-engine principle as `split_stay_enabled` above.
 
 ### Castling
 
@@ -272,8 +281,10 @@ a CONTACT move might itself trigger is not rolled.
 |---|---|
 | `collapse_mode` | PARTIAL / FULL |
 | `splitting_enabled` | Enforced at the **UI** layer (`App.toggle_mode`) |
+| `split_stay_enabled` | Needs `splitting_enabled`; whether a split may leave one branch on the source square ("stay + move" as well as "move + move"). Default on. UI-enforced (`app.py` `_legal_by_square`/`plan_legal`) |
 | `mass_movement` | Enforced at the UI layer (`App.can_mass`) |
 | `mass_split` | Only meaningful with `mass_movement` on; UI-enforced (`App.can_mass_split`) |
+| `mass_all_must_act` | Needs `mass_movement`; every ghost must move/split (none may just stay). UI-enforced (`App._plan_fully_acted`/`_confirm_plan`) |
 | `seed` | |
 | `theme`, `white_name`/`black_name`, `white_color`/`black_color` | Cosmetic; `team_name(color)` / `team_color(color)` helpers |
 | `white_piece_set`/`black_piece_set` | Per-team piece art; `piece_set(color)` accessor |
@@ -317,7 +328,7 @@ sides).
 
 ---
 
-## `game.py`, `textview.py`
+## `game.py`
 
-`game.py` — `random_selfplay`, the classical-only M1 driver used by M1 tests/demo.
-`textview.py` — headless ASCII board (`*B*` = ghost) + exact-fraction legend.
+`random_selfplay` — a classical-only self-play driver (no quantum layer) used by
+the standard-chess movement tests.

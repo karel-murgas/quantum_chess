@@ -2,7 +2,7 @@
 
 **The only place that imports pygame.** Never import it from the engine modules.
 For the one-page map see [ARCHITECTURE.md](../ARCHITECTURE.md); for the visual-design
-history of the skins see [UI_REDESIGN.md](../UI_REDESIGN.md).
+history of the skins see [HISTORY.md](HISTORY.md).
 
 ---
 
@@ -95,17 +95,18 @@ The single place that turns a `(ptype, color)` into board art.
 | `cburnett`, `merida` | Real Lichess SVGs under `ui/assets/pieces/<set>/{wP..bK}.svg`, rasterized at the exact pixel size via `pygame.image.load_sized_svg` — no Cairo/`cairosvg` dep, crisp at any size |
 | `neon` | Generated at runtime: cburnett silhouettes recoloured to the side's colour |
 | `tiger` | Vector-traced tiger figures (see below) |
+| `cthulhu` | Vector-traced Lovecraftian figures, same recipe as tiger (see below) |
 | `unicode` | The original glyph look, drawn by the font path |
 
 A set is either **literal** (SVGs drawn as-is: cburnett/merida) or **tinted**
 (`_TINTED`, a `{set -> base set supplying the shapes}` map: neon borrows cburnett's
-silhouettes, tiger has its own) — `render_art` recolours a tinted set to
+silhouettes, tiger and cthulhu have their own) — `render_art` recolours a tinted set to
 `theme.team_neon(color)`. Recolouring is numpy-free (`_recolor`): `BLEND_RGBA_MAX`
 floods rgb to white keeping each pixel's alpha, then `BLEND_RGBA_MULT` stamps that
 alpha onto a flat colour fill.
 
 `render_token` composites a soft drop shadow (classic sets), a coloured glow (neon), or
-a **contrast rim** (tiger) via `gaussian_blur`, cached.
+a **contrast rim** (tiger, cthulhu) via `gaussian_blur`, cached.
 
 Two caches: raw SVG rasters keyed `(set, code, size)` (theme-independent, never
 invalidated) and composited tokens keyed by a **revision counter** that `set_active`
@@ -141,6 +142,15 @@ own colour at runtime. Because a team colour can land anywhere on the light/dark
 the silhouette recoloured to `theme.ink_for(tint)`, blurred and blitted 3× so it's
 near-opaque at the edge and fades out softly. On cyberpunk that rim reads as a glow for
 free.
+
+### The `cthulhu` set
+
+Same recipe as tiger, off a different sheet: traced from `assets/cthulhu_set.png` by
+**`tools/trace_cthulhu.py`**. That sheet is simpler than tiger's — two rows (green,
+light-blue) of the same six figures, no separate pawn row — so the tracer skips the
+pawn-rescale step entirely and just reads six boxes from one row band. Also a *tinted*
+set (`_TINTED["cthulhu"] = "cthulhu"`) with the same contrast-rim treatment in
+`render_token`.
 
 ---
 
@@ -211,6 +221,16 @@ resolved.
 Every side-log line reads team names/verbs off `self.config.team_name(color)` /
 `theme.TERMS[...]`, never hardcoded "White"/"Black"/"captures".
 
+### Surrender
+
+Instead of moving or splitting, the side to move can give up on the spot
+(`App.surrender`): it sets `QuantumBoard.winner`/`game_over` directly — the other
+side wins immediately, same end-state as a king capture but with no move played, so
+it bypasses the move/collapse machinery entirely (there's no `Move`/`Split`
+involved). Gated behind a **click-to-arm / click-again-to-confirm** side-panel
+button — any other click, or Escape, cancels the armed confirm — so a stray misclick
+can't end the game.
+
 ### Animation driving
 
 Right before resolving, `_execute_move` / `_handle_split_click` snapshot the board
@@ -243,6 +263,36 @@ expensive to recompute per frame. Split mode shows the readout but no per-branch
 split leaves half the mass on the source, so it barely opens a line — deliberately out of
 scope).
 
+### Piece info popover (right-click pin)
+
+A read-only way to identify a token — useful for any reskinned set (tiger/cthulhu) whose art
+doesn't obviously map to a standard piece name, and for reading a piece's quantum state without
+selecting it (selection only ever works for **your own** piece on **your** turn; this works for
+either side, any time, since it touches no selection/move state).
+
+`App.handle_right_click` (wired in `run()` for `MOUSEBUTTONDOWN` button 3, routed through
+`present.to_logical` like a left click) toggles `self.pinned_square` — right-click a piece to pin
+it, again to unpin, elsewhere to repoint. Two things then draw for it, both in `BaseSkin.draw`:
+
+- `draw_pinned_highlight` rings every ghost of the pinned piece in its aura colour (the same
+  "ring the square in the piece's aura colour" idiom `render.draw_plan_rings` uses for a piece
+  being planned), drawn in the ordinary board phase, under the tokens — so the whole superposed
+  cloud is obvious on the board itself, not just listed in the card.
+- `draw_pinned_inspector` renders the piece's identity plus every ghost's square and a probability
+  bar (reusing `_hbar`, the same primitive Clarity's selected-piece inspector uses), drawn last —
+  on top of everything except the promotion picker, so every skin gets it with no bespoke panel
+  work, the same pattern the mass-planning overlay uses. Placement comes from a shared
+  `BaseSkin._popover_rect`: anchored just outside the piece's square (below it if the square is in
+  the board's top half, above otherwise, so the card never covers the piece it describes) and
+  clamped (`pygame.Rect.clamp_ip`) to the logical surface so an a/h-file or rank-1/8 token's card
+  can't spill off-screen.
+
+The pin is deliberately transient, not real state: `handle_mouse_down` clears it on **any** left
+click, and so do `cancel_selection` (Escape), `new_game`, and `load_from` — dismissal follows the
+standard click-triggered-popover convention (click away / Escape / toggle), not a hover tooltip's
+mouse-leave, so it can't vanish out from under you while you're still moving the mouse toward your
+next move.
+
 ### Mass-move / mass-split planning
 
 When the `mass_movement` dial is on, clicking a **superposed** own piece opens planning
@@ -270,8 +320,12 @@ squares = that ghost splits in half). `self.plan_active` is the ghost being aime
 `_commit_plan_branch` centralizes "record this branch" for both first/second pick and cap
 1/2. `plan_legal()` gives the active ghost's targets in the skin's highlight style (a
 `CAPTURE_SOLID` is tagged **risky**, like a split, since a mass leg's mover isn't guaranteed
-present). Aiming a ghost pawn at the promotion rank pops the ordinary promotion picker
-(`_pending_plan_promo` holds the leg; `plan_promo[(from, to)]` records the choice per branch,
+present). With `split_stay_enabled` off, `plan_legal()` withholds the active ghost's own square
+while `plan_splitting()` is true, so a split leg's *second* branch can't land back on the
+source — the "hold in place" click in `_handle_plan_click` (a plain move-only leg, not a split)
+is a separate code path and stays unaffected. Aiming a ghost pawn at the promotion rank pops the
+ordinary promotion picker (`_pending_plan_promo` holds the leg; `plan_promo[(from, to)]` records
+the choice per branch,
 pruned via `_prune_promos` if that ghost is re-aimed) — no auto-queening.
 
 Escape backs out the in-progress ghost assignment first, then the whole plan. Confirm (a
@@ -280,6 +334,13 @@ builds a `MassMove` (every leg single) or a `MassSplit` (when the dial is on), l
 animates every moving branch sliding out — the winning branch is matched by
 `result.chosen_from` **+** `chosen_to` (so a split's *sibling* isn't mistaken for it), lands
 solid, and the losers fade.
+
+With `mass_all_must_act` on, `_confirm_plan` first checks `App._plan_fully_acted()` (every leg's
+destinations differ from a bare "stay") and simply returns without resolving anything if some
+ghost hasn't acted — the plan stays open, both for the mouse Confirm click and the `Enter` key
+(they funnel through the same method). `BaseSkin.draw_plan` reflects this back at the player:
+`render.draw_mass_controls`'s `confirm_enabled` dims the Confirm button, and the status hint swaps
+to say every ghost must move or split first.
 
 The plan is **transient UI state** — not persisted; cleared by `new_game`/`load_from`.
 Planning is skin-agnostic: drawn centrally in `BaseSkin.draw`'s `is_planning()` branch, so
@@ -328,15 +389,49 @@ calls `theme.apply_theme(...)`, then branches:
 
 ## `menu.py`
 
-Pre-game dial picker: collapse mode, splitting, mass moves, mass split, seed, board theme, team
-names, team colours, per-team piece sets.
+Pre-game dial picker: collapse mode, splitting, split stay, mass moves, mass split, all-must-act,
+seed, board theme, team names, team colours, per-team piece sets.
 
-**Dial row is laid out dynamically.** `_dial_specs`/`_dial_rects` include a toggle only once its
-prerequisite dial is on (mass moves needs splitting; mass split needs mass moves) — a dial whose
-prerequisite is off simply **isn't drawn or clickable**, not merely dimmed. The rects (and the
-row's centering) are recomputed on every `handle_click`/`draw` rather than fixed in `__init__`,
-since how many buttons exist depends on current state. Toggling a dial off **cascades** the reset
-onto anything depending on it, and `_build_config` re-applies the same AND-gating defensively.
+**The dial toggles are laid out as a small dependency tree, not a flat row.** `_DIAL_PARENT` maps
+each non-root dial to the one it needs (`split_stay`/`mass` → `split`; `mass_split`/
+`mass_all_must_act` → `mass`). `_dial_rows` groups the currently-visible keys into levels (root
+first, each level exactly the children of the previous one — see `_DIAL_PARENT`); `_dial_rects`
+lays each level out centered under its own parent's x-position (not the whole screen), so the tree
+visually branches exactly where the dial dependencies do — e.g. the mass-split/all-must-act pair
+sits centered under "Mass moves", offset from the page center, not under "Splitting". `_draw_dial_tree`
+draws elbowed connector lines (parent bottom → midpoint → child top) *before* the buttons so the
+boxes sit on top of the line ends. A dial whose prerequisite is off simply **isn't drawn or
+clickable**, not merely dimmed. Everything below the tree reserves fixed vertical space for its
+tallest possible shape (3 levels) so lower sections never have to move as dials toggle. Toggling a
+dial off **cascades** the reset onto anything depending on it, and `_build_config` re-applies the
+same AND-gating defensively.
+
+**Split stay** (`split_stay_enabled`, default on) governs whether a split may offer the ghost's
+own square as one of its two destinations — the "stay + move" split (see `app.py` below and
+`ENGINE.md::legal_split_targets`). It's a child of `split`, not of `mass` — it only depends on
+splitting being on, and applies equally to an ordinary one-ghost split and to a split leg inside a
+mass-split plan. It has no bearing on a *plain move* (single-ghost or a mass-move leg that isn't
+splitting) — holding a ghost in place there was never part of "splitting" and stays available
+regardless of this dial.
+
+**All must act** (`mass_all_must_act`, default off, a child of `mass`) requires every ghost in a
+mass-move/mass-split plan to be assigned a real move or split — none may be left at its default
+"stay" (`(from_square,)`) assignment. Enforced entirely on the confirm path: `App._plan_fully_acted`
+checks every leg, and `_confirm_plan` is simply a no-op while it's violated (same for the Enter-key
+shortcut, since both call the same method) — the plan just stays open so the player can go assign
+the remaining ghost(s). The skin dims the Confirm button (`render.draw_mass_controls`'s
+`confirm_enabled`) and swaps the status hint to say so while blocked. Composes with split stay
+exactly as it reads: a ghost that splits with one branch staying still counts as having acted (a
+split's two destinations can never both equal the source — see `_commit_plan_branch`), so the two
+dials don't conflict.
+
+**Mouseover tooltips.** `_draw_hover_tooltips` (called last in `draw`) maps the real cursor position
+onto the menu's own coordinate space via `present.to_logical(pygame.mouse.get_pos())` — one frame
+stale at worst, since `present` records the mapping from the *previous* `present()` call — and,
+if it lands on the collapse-mode buttons or any visible dial, renders a word-wrapped info box
+(`_draw_tooltip`/`_wrap_text`) explaining that control, placed just below it (above if that would
+run off the bottom of the screen). Copy lives in flat `_DIAL_TOOLTIPS`/`_COLLAPSE_TOOLTIPS` dicts,
+independent of the on/off-state label text in `_dial_specs`.
 
 **Team fields.** Names are click-to-focus text inputs (`active_field` + `handle_keydown`, wired
 from the caller's event loop). Below the names, each side gets a **piece-set dropdown**

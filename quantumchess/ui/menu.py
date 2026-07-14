@@ -1,4 +1,4 @@
-"""Pre-game match-setup menu -- the v1 dials (see PLAN.md)."""
+"""Pre-game match-setup menu -- the v1 dials (see docs/ENGINE.md)."""
 
 from __future__ import annotations
 
@@ -10,11 +10,47 @@ import pygame
 
 from ..config import CollapseMode, GameConfig
 from .. import persistence
-from . import theme, pieces, render
+from . import theme, pieces, present, render
 
 MAX_NAME_LEN = 16
 TEAMS_SAVE_PATH = Path("saves/teams.json")
 LAST_SETTINGS_PATH = Path("saves/last_settings.json")
+
+# The dial toggle row is drawn as a small dependency tree, not a flat row --
+# each entry here maps a dial to the one it needs (see _dial_rows/_dial_rects).
+# "split" (Splitting) is the implicit root: everything else needs it directly
+# or indirectly.
+_DIAL_PARENT = {
+    "split_stay": "split",
+    "mass": "split",
+    "mass_split": "mass",
+    "mass_all_must_act": "mass",
+}
+
+# Mouseover copy for each dial toggle and collapse-mode button (see
+# _draw_hover_tooltips). Kept as flat data, separate from the labels in
+# _dial_specs, since it doesn't depend on on/off state.
+_DIAL_TOOLTIPS = {
+    "split": "Allow a ghost to split into two branches (probability halved each) "
+             "instead of only moving. Off restricts every turn to a plain move.",
+    "split_stay": "When a ghost splits, allow one of the two branches to be the "
+                  "source square itself (\"stay + move\"). Off requires both "
+                  "branches to land on a new square.",
+    "mass": "Move every ghost of a superposed piece in one planned turn -- each "
+            "ghost aimed independently -- settled by a single roll, instead of "
+            "acting on one ghost per turn.",
+    "mass_split": "Inside a mass-move turn, let each ghost split as well as "
+                  "relocate, not just move.",
+    "mass_all_must_act": "Require every ghost in a mass turn to move or split -- "
+                        "none may simply stay behind untouched.",
+}
+_COLLAPSE_TOOLTIPS = {
+    CollapseMode.FULL: "A 'not here' result resolves the whole piece to one "
+                       "location at once, dropping every other ghost.",
+    CollapseMode.PARTIAL: "A 'not here' result only removes the contacted ghost; "
+                          "the piece's remaining ghosts renormalize and stay "
+                          "superposed.",
+}
 
 
 class Menu:
@@ -30,8 +66,10 @@ class Menu:
         self.in_game = in_game
         self.collapse_mode = CollapseMode.FULL
         self.splitting_enabled = True
+        self.split_stay_enabled = True
         self.mass_movement = False
         self.mass_split = False
+        self.mass_all_must_act = False
         self.seed = random.SystemRandom().randrange(1_000_000)
 
         self.theme_name = "origin"
@@ -48,8 +86,10 @@ class Menu:
         if initial_config is not None:
             self.collapse_mode = initial_config.collapse_mode
             self.splitting_enabled = initial_config.splitting_enabled
+            self.split_stay_enabled = initial_config.split_stay_enabled
             self.mass_movement = initial_config.mass_movement
             self.mass_split = initial_config.mass_split
+            self.mass_all_must_act = initial_config.mass_all_must_act
             self.seed = initial_config.seed
             self.theme_name = initial_config.theme
             self.white_piece_set = initial_config.white_piece_set
@@ -71,20 +111,22 @@ class Menu:
         cx = w // 2
         self.collapse_full_rect = pygame.Rect(cx - 220, 112, 200, 40)
         self.collapse_partial_rect = pygame.Rect(cx + 20, 112, 200, 40)
-        # The "Splitting"/"Mass moves"/"Mass split" toggle row is laid out
-        # dynamically (see _dial_specs/_dial_rects) -- each toggle is only
-        # shown once its prerequisite dial is on, so the row's width (and
-        # therefore each button's rect) depends on the current state and can't
-        # be fixed up front.
+        # The dial toggles below Collapse mode are laid out dynamically as a
+        # tree, not a fixed row (see _dial_rows/_dial_rects) -- which ones are
+        # visible, and how many levels deep the tree goes, depends on the
+        # current state. Everything below reserves room for the tree's tallest
+        # possible shape (3 levels: Splitting -> Split stay/Mass moves -> Mass
+        # split/All must act) so lower sections never have to move.
+        y_after_tree = 296
 
         self.theme_rects = {
-            "origin": pygame.Rect(cx - 220, 232, 200, 40),
-            "cyberpunk": pygame.Rect(cx + 20, 232, 200, 40),
+            "origin": pygame.Rect(cx - 220, y_after_tree, 200, 40),
+            "cyberpunk": pygame.Rect(cx + 20, y_after_tree, 200, 40),
         }
 
-        self.white_name_rect = pygame.Rect(cx - 320, 300, 300, 34)
-        self.black_name_rect = pygame.Rect(cx + 20, 300, 300, 34)
-        self.swap_rect = pygame.Rect(cx - 20, 300, 40, 34)
+        self.white_name_rect = pygame.Rect(cx - 320, y_after_tree + 68, 300, 34)
+        self.black_name_rect = pygame.Rect(cx + 20, y_after_tree + 68, 300, 34)
+        self.swap_rect = pygame.Rect(cx - 20, y_after_tree + 68, 40, 34)
 
         # Piece-set picker, one dropdown per team (each side chooses its own
         # art), sitting directly under Teams next to that team's colour
@@ -92,7 +134,7 @@ class Menu:
         # a small king preview; open it drops a same-width option list below
         # (see _piece_option_rects/_draw_piece_options).
         dd_w, dd_h = 140, 38
-        piece_row_y = 364
+        piece_row_y = y_after_tree + 132
         self.white_piece_dropdown_rect = pygame.Rect(cx - 320, piece_row_y, dd_w, dd_h)
         self.black_piece_dropdown_rect = pygame.Rect(cx + 20, piece_row_y, dd_w, dd_h)
 
@@ -100,21 +142,22 @@ class Menu:
         self.black_swatch_rects = self._swatch_rects(cx + 20 + dd_w + 20, piece_row_y)
 
         # One row: Save Teams | Reroll seed | Load Teams
-        self.team_save_rect = pygame.Rect(cx - 330, 470, 200, 38)
-        self.reroll_rect = pygame.Rect(cx - 100, 470, 200, 38)
-        self.team_load_rect = pygame.Rect(cx + 130, 470, 200, 38)
+        self.team_save_rect = pygame.Rect(cx - 330, y_after_tree + 238, 200, 38)
+        self.reroll_rect = pygame.Rect(cx - 100, y_after_tree + 238, 200, 38)
+        self.team_load_rect = pygame.Rect(cx + 130, y_after_tree + 238, 200, 38)
         self.team_status = ""       # transient feedback for the last save/load
 
         # Mid-game, Start doubles as "New Game" (same rect, relabeled) and
         # gains a Resume neighbour so a match's own settings screen can back
         # out without resetting the board. Pre-game there's nothing to resume
         # to, so Start alone stays centered as it always has.
+        start_y = y_after_tree + 348
         if self.in_game:
-            self.resume_rect = pygame.Rect(cx - 210, 580, 200, 50)
-            self.start_rect = pygame.Rect(cx + 10, 580, 200, 50)
+            self.resume_rect = pygame.Rect(cx - 210, start_y, 200, 50)
+            self.start_rect = pygame.Rect(cx + 10, start_y, 200, 50)
         else:
             self.resume_rect = None
-            self.start_rect = pygame.Rect(cx - 100, 580, 200, 50)
+            self.start_rect = pygame.Rect(cx - 100, start_y, 200, 50)
 
     def _piece_option_rects(self, dropdown_rect):
         """{set_key -> Rect} for a dropdown's open option list, one row per
@@ -136,35 +179,86 @@ class Menu:
         return rects
 
     def _dial_specs(self):
-        """(key, label, active) for each "Splitting"/"Mass moves"/"Mass split"
-        toggle currently visible. Each is **hidden entirely** (not merely
-        disabled) once its prerequisite dial is off -- mass movement only
-        makes sense with splitting on, and mass split only with mass movement
-        on -- so there's nothing to show a player that couldn't apply."""
+        """(key, label, active) for each dial toggle currently visible. Each is
+        **hidden entirely** (not merely disabled) once its prerequisite dial is
+        off -- split stay and mass moves both need splitting on; mass split and
+        all-must-act both need mass moves on -- so there's nothing to show a
+        player that couldn't apply. See ``_DIAL_PARENT`` for the dependency
+        chain this mirrors."""
         specs = [("split", f"Splitting: {'On' if self.splitting_enabled else 'Off'}",
                  self.splitting_enabled)]
         if self.splitting_enabled:
+            specs.append(("split_stay", f"Split stay: {'On' if self.split_stay_enabled else 'Off'}",
+                         self.split_stay_enabled))
             specs.append(("mass", f"Mass moves: {'On' if self.mass_movement else 'Off'}",
                          self.mass_movement))
             if self.mass_movement:
                 specs.append(("mass_split", f"Mass split: {'On' if self.mass_split else 'Off'}",
                              self.mass_split))
+                specs.append(("mass_all_must_act", f"All must act: {'On' if self.mass_all_must_act else 'Off'}",
+                             self.mass_all_must_act))
         return specs
 
+    def _dial_rows(self):
+        """Visible dial keys grouped into tree levels, root first -- each level
+        is exactly the children (per ``_DIAL_PARENT``) of the previous level's
+        nodes, mirroring the dependency chain (Splitting -> Split stay/Mass
+        moves -> Mass split/All must act). Feeds both ``_dial_rects`` (layout)
+        and ``draw`` (the connecting lines) so the tree's shape is described
+        once."""
+        keys = [key for key, _label, _active in self._dial_specs()]
+        keyset = set(keys)
+        rows = []
+        placed = set()
+        current = [k for k in keys if _DIAL_PARENT.get(k) not in keyset]
+        while current:
+            rows.append(current)
+            placed.update(current)
+            current = [k for k in keys if k not in placed and _DIAL_PARENT.get(k) in placed]
+        return rows
+
     def _dial_rects(self):
-        """{key -> Rect} for the currently-visible dial toggles (see
-        ``_dial_specs``), laid out as a row centered on the same span the
-        fixed 3-button row used to occupy. Recomputed live rather than cached
-        in ``__init__`` -- which toggles are visible depends on the current
-        dial state, so the row's width can change as the player clicks."""
-        specs = self._dial_specs()
-        w, h, gap = 150, 40, 10
-        total = len(specs) * w + (len(specs) - 1) * gap
+        """{key -> Rect} for the currently-visible dial toggles, laid out as a
+        tree (see ``_dial_rows``): the root is centered on the menu, and each
+        further level's siblings are centered directly under their shared
+        parent -- so the layout visually branches exactly where the dial
+        dependency chain does. Recomputed live rather than cached in
+        ``__init__`` -- both which toggles are visible and the tree's shape
+        change as the player clicks."""
+        rows = self._dial_rows()
+        w, h, gap_x, gap_y = 150, 30, 10, 10
         cx = self.screen.get_width() // 2
-        x0 = cx - total // 2
-        y = 164
-        return {key: pygame.Rect(x0 + i * (w + gap), y, w, h)
-                for i, (key, _label, _active) in enumerate(specs)}
+        y0 = 158
+        rects = {}
+        centers = {}
+        for depth, row in enumerate(rows):
+            y = y0 + depth * (h + gap_y)
+            group_cx = cx if depth == 0 else centers[_DIAL_PARENT[row[0]]]
+            total = len(row) * w + (len(row) - 1) * gap_x
+            x0 = group_cx - total // 2
+            for i, key in enumerate(row):
+                rect = pygame.Rect(x0 + i * (w + gap_x), y, w, h)
+                rects[key] = rect
+                centers[key] = rect.centerx
+        return rects
+
+    def _draw_dial_tree(self, rects):
+        """Elbowed connector lines from each visible dial to its parent (see
+        ``_DIAL_PARENT``) -- drawn before the buttons so the boxes sit on top
+        of the line ends, giving the toggle row a genuine dependency-tree look
+        instead of a flat, unrelated row of buttons."""
+        for key, rect in rects.items():
+            parent_key = _DIAL_PARENT.get(key)
+            if parent_key is None or parent_key not in rects:
+                continue
+            prect = rects[parent_key]
+            mid_y = (prect.bottom + rect.top) // 2
+            pygame.draw.line(self.screen, theme.TEXT_DIM,
+                             (prect.centerx, prect.bottom), (prect.centerx, mid_y), 2)
+            pygame.draw.line(self.screen, theme.TEXT_DIM,
+                             (prect.centerx, mid_y), (rect.centerx, mid_y), 2)
+            pygame.draw.line(self.screen, theme.TEXT_DIM,
+                             (rect.centerx, mid_y), (rect.centerx, rect.top), 2)
 
     def _build_config(self):
         # Defensive AND-gating of the dial dependency chain (splitting ->
@@ -174,8 +268,10 @@ class Menu:
         mass_movement = self.mass_movement and self.splitting_enabled
         return GameConfig(collapse_mode=self.collapse_mode,
                           splitting_enabled=self.splitting_enabled,
+                          split_stay_enabled=self.split_stay_enabled,
                           mass_movement=mass_movement,
                           mass_split=self.mass_split and mass_movement,
+                          mass_all_must_act=self.mass_all_must_act and mass_movement,
                           seed=self.seed,
                           theme=self.theme_name,
                           white_piece_set=self.white_piece_set,
@@ -227,16 +323,26 @@ class Menu:
         elif dial_rects["split"].collidepoint(pos):
             self.splitting_enabled = not self.splitting_enabled
             if not self.splitting_enabled:
-                # mass movement (and mass split with it) only make sense with
-                # splitting on -- turning splitting off hides and clears both.
+                # split stay, mass movement (and mass split/all-must-act with
+                # it) only make sense with splitting on -- turning splitting
+                # off hides and clears all of them.
+                self.split_stay_enabled = True
                 self.mass_movement = False
                 self.mass_split = False
+                self.mass_all_must_act = False
+        elif "split_stay" in dial_rects and dial_rects["split_stay"].collidepoint(pos):
+            self.split_stay_enabled = not self.split_stay_enabled
         elif "mass" in dial_rects and dial_rects["mass"].collidepoint(pos):
             self.mass_movement = not self.mass_movement
             if not self.mass_movement:
-                self.mass_split = False   # can't mass-split without mass movement
+                # mass split and all-must-act only make sense with mass
+                # movement on -- turning it off hides and clears both.
+                self.mass_split = False
+                self.mass_all_must_act = False
         elif "mass_split" in dial_rects and dial_rects["mass_split"].collidepoint(pos):
             self.mass_split = not self.mass_split
+        elif "mass_all_must_act" in dial_rects and dial_rects["mass_all_must_act"].collidepoint(pos):
+            self.mass_all_must_act = not self.mass_all_must_act
         elif self.theme_rects["origin"].collidepoint(pos):
             self.theme_name = "origin"
         elif self.theme_rects["cyberpunk"].collidepoint(pos):
@@ -331,8 +437,10 @@ class Menu:
             return
         self.collapse_mode = data["collapse_mode"]
         self.splitting_enabled = data["splitting_enabled"]
+        self.split_stay_enabled = data["split_stay_enabled"]
         self.mass_movement = data["mass_movement"]
         self.mass_split = data["mass_split"]
+        self.mass_all_must_act = data["mass_all_must_act"]
         self.theme_name = data["theme"]
         self.white_piece_set = data["white_piece_set"]
         self.black_piece_set = data["black_piece_set"]
@@ -462,6 +570,7 @@ class Menu:
         self._button(self.collapse_partial_rect, "Partial", self.collapse_mode == CollapseMode.PARTIAL)
 
         dial_rects = self._dial_rects()
+        self._draw_dial_tree(dial_rects)
         for key, label, active in self._dial_specs():
             self._button(dial_rects[key], label, active, font=self.font_small)
 
@@ -511,3 +620,70 @@ class Menu:
             self._draw_piece_options(self.white_piece_dropdown_rect, self.white_piece_set, chess.WHITE)
         if self.black_piece_open:
             self._draw_piece_options(self.black_piece_dropdown_rect, self.black_piece_set, chess.BLACK)
+
+        # A mouseover tooltip explaining whatever's under the cursor, drawn
+        # dead last so it floats over everything else.
+        self._draw_hover_tooltips(dial_rects)
+
+    # ------------------------------------------------------------- tooltips
+    def _wrap_text(self, text, font, max_width):
+        words = text.split(" ")
+        lines = []
+        current = ""
+        for word in words:
+            trial = f"{current} {word}".strip()
+            if current and font.size(trial)[0] > max_width:
+                lines.append(current)
+                current = word
+            else:
+                current = trial
+        if current:
+            lines.append(current)
+        return lines
+
+    def _draw_tooltip(self, text, anchor_rect):
+        """A small floating info box explaining ``anchor_rect``'s control,
+        word-wrapped and placed just below it (above it if that would run off
+        the bottom of the screen; clamped horizontally so it never runs off
+        either side)."""
+        font = self.font_small
+        max_text_w = 320
+        lines = self._wrap_text(text, font, max_text_w)
+        pad = 10
+        line_h = font.get_height() + 2
+        box_w = max_text_w + pad * 2
+        box_h = line_h * len(lines) + pad * 2
+
+        screen_w, screen_h = self.screen.get_size()
+        x = min(max(anchor_rect.centerx - box_w // 2, 8), screen_w - box_w - 8)
+        y = anchor_rect.bottom + 10
+        if y + box_h > screen_h - 8:
+            y = anchor_rect.top - box_h - 10
+
+        box = pygame.Surface((box_w, box_h), pygame.SRCALPHA)
+        pygame.draw.rect(box, (18, 18, 22, 235), box.get_rect(), border_radius=8)
+        pygame.draw.rect(box, theme.ACCENT, box.get_rect(), width=1, border_radius=8)
+        for i, line in enumerate(lines):
+            surf = font.render(line, True, (232, 232, 232))
+            box.blit(surf, (pad, pad + i * line_h))
+        self.screen.blit(box, (x, y))
+
+    def _draw_hover_tooltips(self, dial_rects):
+        """Show one info tooltip for whichever collapse-mode or dial button
+        the mouse currently sits over, if any. Uses ``present.to_logical`` to
+        map the real cursor position onto this menu's own (base-resolution)
+        coordinate space, same as a click would be -- one frame stale at
+        worst, since ``present`` records the mapping from the previous
+        ``present()`` call."""
+        pos = present.to_logical(pygame.mouse.get_pos())
+        targets = [
+            (self.collapse_full_rect, _COLLAPSE_TOOLTIPS[CollapseMode.FULL]),
+            (self.collapse_partial_rect, _COLLAPSE_TOOLTIPS[CollapseMode.PARTIAL]),
+        ]
+        for key, rect in dial_rects.items():
+            if key in _DIAL_TOOLTIPS:
+                targets.append((rect, _DIAL_TOOLTIPS[key]))
+        for rect, text in targets:
+            if rect.collidepoint(pos):
+                self._draw_tooltip(text, rect)
+                return

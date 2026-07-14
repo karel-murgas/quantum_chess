@@ -345,9 +345,10 @@ def draw_plan_arrows(surface, plan, plan_piece, plan_pick_a=None):
                            theme.SQUARE // 5, width=theme.px(4))
 
 
-def draw_mass_controls(surface, fonts):
+def draw_mass_controls(surface, fonts, confirm_enabled=True):
     rects = mass_controls_rects()
-    _draw_button(surface, rects["confirm"], "Confirm (Enter)", fonts["small"], active=True)
+    _draw_button(surface, rects["confirm"], "Confirm (Enter)", fonts["small"],
+                active=True, enabled=confirm_enabled)
     _draw_button(surface, rects["cancel"], "Cancel (Esc)", fonts["small"], active=False)
 
 

@@ -18,11 +18,10 @@ headless and leaves the door open to a non-pygame frontend later.
 | `model.py` | `Piece`, `Ghost`, `QuantumBoard`. Probabilities are exact `Fraction`s. `to_classical_board()` projects a *solid* position onto a `python-chess` board — used as the movement oracle and for ASCII rendering. |
 | `rules.py` | `Move`/`MoveKind`/`Split`/`MassMove`/`MassSplit`, `generate_moves` (pseudo-legal, via `python-chess` attack tables over solids), `apply_move`, `apply_split`, `legal_split_targets`, castling. Occupancy invariant: **≤1 ghost per square**; a different piece's ghost on the same square is a `CONTACT` that needs a collapse. |
 | `collapse.py` | The measurement/collapse engine. `resolve_move` / `resolve_split` / `resolve_mass_move` / `resolve_mass_split`. Measurement only happens on collision (relocating to an empty square is instant, no dice). Returns a `CollapseEvent` log the UI animates from. |
-| `config.py` | `GameConfig` — the match dials (collapse mode, splitting, mass movement, mass split, seed) plus the cosmetic match identity (theme, team names/colours, per-team piece sets). Split out from `game.py` so `collapse.py` can import it without a circular dependency. |
+| `config.py` | `GameConfig` — the match dials (collapse mode, splitting, split stay, mass movement, mass split, all-must-act, seed) plus the cosmetic match identity (theme, team names/colours, per-team piece sets). Split out from `game.py` so `collapse.py` can import it without a circular dependency. |
 | `check.py` | Advisory (non-rule-changing) check-probability overlay: `check_probability`, `move_self_check`. Exact `Fraction` math, no RNG — the *expected* danger, not a rolled outcome. |
-| `game.py` | `random_selfplay` — the classical-only M1 driver used by early tests/demos. |
+| `game.py` | `random_selfplay` — a classical-only self-play driver used by the standard-chess movement tests. |
 | `persistence.py` | JSON save/load (`save_game`/`load_game`), including RNG state so a resumed game's future collapses continue the same sequence. Separate `save_teams`/`load_teams` for cosmetic team identity. |
-| `textview.py` | Headless ASCII board renderer (used by the `demo_*.py` scripts). |
 
 ## UI (`quantumchess/ui/`)
 
@@ -40,8 +39,6 @@ headless and leaves the door open to a non-pygame frontend later.
 ## Entry points
 
 - `python main.py` — menu, then the real game.
-- `python demo_m1.py` / `demo_m2.py` / `demo_m3.py [seed]` — headless ASCII
-  demos of each milestone's mechanics, no pygame required.
 
 ## Tests (`tests/`)
 
@@ -58,5 +55,6 @@ python -m pytest -q
   [docs/UI.md](docs/UI.md).
 - **Why it works that way, and when it landed** → [docs/HISTORY.md](docs/HISTORY.md).
 - **The invariants you must not break** → [CLAUDE.md](CLAUDE.md).
-- **The ruleset itself, dials, and milestone plan** → [PLAN.md](PLAN.md).
+- **The ruleset itself and the dials** → [docs/ENGINE.md](docs/ENGINE.md) and
+  [CLAUDE.md](CLAUDE.md)'s locked design decisions.
 - **Player-facing controls** → [HOW_TO_PLAY.md](HOW_TO_PLAY.md).

@@ -21,6 +21,10 @@ selectable art sets and is the single place that knows how to turn a
   since the source art has no light/dark pair. Because a tint can land anywhere
   on the light/dark range, the token is drawn with a contrast rim (see
   ``render_token``) so it reads on both square colours.
+* ``"cthulhu"`` -- flat Lovecraftian silhouettes (a tentacled elder-god head for
+  the king/queen, a hooded acolyte for the pawn), traced from the artwork in
+  ``assets/cthulhu_set.png``. Same deal as tiger: **team-tinted**, one shape per
+  piece, contrast rim in ``render_token``.
 
 A set is either *literal* (its SVGs are drawn as they are: cburnett, merida) or
 *tinted* (``_TINTED``: its silhouettes are recoloured to the team colour).
@@ -51,6 +55,7 @@ PIECE_SETS = [
     ("cburnett", "Classic"),
     ("merida", "Merida"),
     ("tiger", "Tiger"),
+    ("cthulhu", "Cthulhu"),
     ("neon", "Neon"),
     ("unicode", "Unicode"),
 ]
@@ -65,9 +70,9 @@ _CODE = {
 _NEON_BASE = "cburnett"
 
 # Sets drawn as a solid silhouette in the side's own team colour, mapped to the
-# set whose SVGs supply the shapes (neon borrows cburnett's; tiger has its own,
-# a single shape per piece rather than a light/dark pair).
-_TINTED = {"neon": _NEON_BASE, "tiger": "tiger"}
+# set whose SVGs supply the shapes (neon borrows cburnett's; tiger and cthulhu
+# have their own, a single shape per piece rather than a light/dark pair).
+_TINTED = {"neon": _NEON_BASE, "tiger": "tiger", "cthulhu": "cthulhu"}
 
 _active = {chess.WHITE: "cburnett", chess.BLACK: "cburnett"}
 _rev = 0                       # bumped on set/theme change; keys _token_cache
@@ -156,9 +161,9 @@ def render_art(set_name: str, ptype: int, color: bool, size: int) -> pygame.Surf
 def render_token(set_name: str, ptype: int, color: bool, size: int, *, glow=None):
     """A ready-to-blit token: the piece art with a soft drop shadow (classic
     sets), a coloured glow (``glow`` given, used by the neon set), or a contrast
-    rim (the tiger set). Returned surface is larger than ``size`` (padded for
-    the shadow/glow/rim spread) and is cached; callers apply per-ghost opacity
-    with ``set_alpha`` on a copy."""
+    rim (the tiger/cthulhu sets). Returned surface is larger than ``size``
+    (padded for the shadow/glow/rim spread) and is cached; callers apply
+    per-ghost opacity with ``set_alpha`` on a copy."""
     key = (_rev, set_name, ptype, color, size, glow)
     tok = _token_cache.get(key)
     if tok is not None:
@@ -175,7 +180,7 @@ def render_token(set_name: str, ptype: int, color: bool, size: int, *, glow=None
         # Two passes deepen the neon bloom without a separate bright core.
         canvas.blit(halo, (pad, pad))
         canvas.blit(halo, (pad, pad))
-    elif set_name == "tiger":
+    elif set_name in ("tiger", "cthulhu"):
         # The silhouette is the team's own colour, which may sit anywhere on the
         # light/dark range -- a pale one on a light square (or a dark one on a
         # dark square) would vanish. A tight rim in the contrasting ink outlines

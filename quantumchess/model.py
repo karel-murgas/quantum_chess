@@ -1,12 +1,11 @@
 """Core headless data model for Quantum Chess.
 
 This module is deliberately free of any UI / pygame imports so the engine can be
-unit-tested in isolation and later reused by any frontend (see PLAN.md).
+unit-tested in isolation and reused by any frontend (see ARCHITECTURE.md).
 
-Milestone 1 scope: every living piece is *solid* — it owns exactly one ghost
-with probability 1, so the position is equivalent to a classical chess board.
-The types below (Piece / Ghost / probabilities as ``Fraction``) already carry
-the structure the quantum layer will need in later milestones.
+A *solid* piece owns exactly one ghost with probability 1 (equivalent to a
+classical board square); a superposed piece owns several ghosts whose
+probabilities (exact ``Fraction``s) sum to 1.
 """
 
 from __future__ import annotations
@@ -29,7 +28,7 @@ class Piece:
 
     The identity matters once the piece splits: every ghost points back to the
     same ``id``, and a piece is only ever in superposition *with its own ghosts*
-    (there is no cross-piece entanglement — see PLAN.md).
+    (there is no cross-piece entanglement — see CLAUDE.md).
     """
 
     id: int
@@ -51,8 +50,8 @@ class Ghost:
 class QuantumBoard:
     """Mutable game state: pieces, their ghosts, and turn bookkeeping.
 
-    Invariant (per living piece): the probabilities of its ghosts sum to 1.
-    In Milestone 1 that trivially holds because each piece has a single p=1 ghost.
+    Invariant (per living piece): the probabilities of its ghosts sum to 1
+    (a solid piece has a single p=1 ghost).
     """
 
     def __init__(self) -> None:
@@ -116,9 +115,9 @@ class QuantumBoard:
     def to_classical_board(self) -> chess.Board:
         """Project the current (all-solid) position onto a python-chess board.
 
-        Used as a movement oracle and for ASCII rendering in Milestone 1. Asserts
-        that every living piece is solid; the quantum layer will replace callers
-        of this with occupancy that understands ghosts.
+        Used as a geometric movement oracle. Asserts that every living piece is
+        solid, so callers project the solid position and let the quantum layer
+        handle ghost occupancy separately.
         """
         board = chess.Board.empty()
         for piece in self.living_pieces():
@@ -129,9 +128,9 @@ class QuantumBoard:
             )
         board.turn = self.turn
         board.ep_square = self.ep_square
-        # Castling rights are intentionally cleared: Milestone 1 omits castling
-        # (variant has no check, so castling is added as a simple special-case
-        # in a later milestone — see PLAN.md).
+        # Castling rights are intentionally cleared: this board is only a
+        # movement oracle for ordinary moves. Castling is handled by our own
+        # rules.py special-case (see docs/ENGINE.md), not delegated here.
         board.castling_rights = chess.BB_EMPTY
         return board
 
