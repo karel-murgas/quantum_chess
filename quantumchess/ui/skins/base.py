@@ -194,6 +194,7 @@ class BaseSkin:
             warnings = app._selfcheck_by_square() if app.show_check else {}
             self.draw_sibling_web(surf, app)
             self.draw_selection(surf, app)
+            self.draw_pinned_highlight(surf, app)
             self.draw_legal(surf, app, legal, warnings)
             self.draw_pieces(surf, app)
             if app._pending_promotion is not None:
@@ -204,6 +205,8 @@ class BaseSkin:
 
         if app._pending_promotion is not None or app._pending_plan_promo is not None:
             self.draw_promotion(surf, app)
+        elif not app.is_animating():
+            self.draw_pinned_inspector(surf, app)
 
     # ------------------------------------------------------------ background
     def draw_background(self, surf, app):
@@ -314,12 +317,16 @@ class BaseSkin:
         self.draw_legal(surf, app, app.plan_legal(), {})
         self.draw_pieces(surf, app)
         render.draw_plan_arrows(surf, app.plan, app.plan_piece, app.plan_pick_a)
-        render.draw_mass_controls(surf, self.fonts)
+        all_acted = app._plan_fully_acted()
+        confirm_enabled = not (app.config.mass_all_must_act and not all_acted)
+        render.draw_mass_controls(surf, self.fonts, confirm_enabled=confirm_enabled)
         split = app.plan_splitting()
         noun = "Mass split" if app.can_mass_split() else "Mass move"
         if app._pending_plan_promo is not None:
             return "Choose promotion for this branch: click a piece"
         if app.plan_active is None:
+            if not confirm_enabled:
+                return "Every ghost must move or split before you can Confirm"
             hint = " ([M] to split a ghost)" if app.can_mass_split() and not split else ""
             return f"{noun}: click a ghost to aim it, then Confirm{hint}"
         if split and app.plan_pick_a is not None:
@@ -457,6 +464,109 @@ class BaseSkin:
         """Hook for extra panel content (e.g. Clarity's inspector) between the
         readout and the log divider. Returns the new y cursor."""
         return y
+
+    # --------------------------------------------------------- info popovers
+    def _popover_rect(self, anchor_rect, size):
+        """Placement shared by the hover tooltip and the pinned inspector
+        card: just outside ``anchor_rect`` (below it if the anchor sits in
+        the board's top half, above otherwise, so the popover never covers
+        the piece it's describing), clamped to stay fully inside the logical
+        surface so an edge-file/rank token doesn't spill off-screen."""
+        w, h = size
+        board = self.board_rect()
+        below = anchor_rect.centery < board.centery
+        box = pygame.Rect(0, 0, w, h)
+        box.centerx = anchor_rect.centerx
+        if below:
+            box.top = anchor_rect.bottom + theme.px(6)
+        else:
+            box.bottom = anchor_rect.top - theme.px(6)
+        box.clamp_ip(pygame.Rect(0, 0, WINDOW_W, WINDOW_H))
+        return box
+
+    def _popover_bg(self, surf, box):
+        bg = pygame.Surface(box.size, pygame.SRCALPHA)
+        bg.fill((*theme.PANEL_BG, 235))
+        surf.blit(bg, box.topleft)
+        pygame.draw.rect(surf, self._tint(theme.TEXT_DIM, 140), box,
+                         width=theme.px(1), border_radius=theme.px(6))
+
+    def draw_pinned_highlight(self, surf, app):
+        """Ring every ghost of the pinned piece (see draw_pinned_inspector) in
+        its aura colour -- the visual half of the right-click pin, showing the
+        whole superposed cloud at a glance rather than making you read the
+        card's square list. Same "ring the square, aura colour, under the
+        tokens" idiom `render.draw_plan_rings` already uses for a piece being
+        planned."""
+        sq = app.pinned_square
+        if sq is None:
+            return
+        ghost = app.qb.ghost_at(sq)
+        if ghost is None:
+            return
+        color = self._aura_color(ghost.piece_id)
+        for g in app.qb.ghosts_of(ghost.piece_id):
+            pygame.draw.rect(surf, color, render.square_rect(g.square), width=theme.px(4))
+
+    def draw_pinned_inspector(self, surf, app):
+        """The card half of the right-click pin (see
+        ``App.handle_right_click`` / ``draw_pinned_highlight``): the piece's
+        identity plus every ghost's square and probability as a bar, so a
+        whole superposed cloud can be read at a glance without selecting it
+        (selecting only works for your own piece on your own turn; this
+        works for either side, any time)."""
+        sq = app.pinned_square
+        if sq is None:
+            return
+        ghost = app.qb.ghost_at(sq)
+        if ghost is None:
+            app.pinned_square = None
+            return
+        p = theme.px
+        pid = ghost.piece_id
+        gs = sorted(app.qb.ghosts_of(pid), key=lambda g: -float(g.prob))
+        header_s = self.fonts["small"].render(app._piece_label(pid), True, self._aura_color(pid))
+        hint_s = self.fonts["tiny"].render("right-click or Esc to close", True, theme.TEXT_DIM)
+        pad = p(10)
+        anchor = render.square_rect(sq)
+
+        if len(gs) == 1:
+            body_s = self.fonts["tiny"].render("solid -- probability 1", True, theme.TEXT_DIM)
+            w = max(header_s.get_width(), body_s.get_width(), hint_s.get_width()) + pad * 2
+            h = (header_s.get_height() + p(6) + body_s.get_height() + p(10)
+                 + hint_s.get_height() + pad * 2)
+            box = self._popover_rect(anchor, (w, h))
+            self._popover_bg(surf, box)
+            x, y = box.left + pad, box.top + pad
+            surf.blit(header_s, (x, y)); y += header_s.get_height() + p(6)
+            surf.blit(body_s, (x, y)); y += body_s.get_height() + p(10)
+            surf.blit(hint_s, (x, y))
+            return
+
+        row_h, bar_w = p(20), p(90)
+        rows = [(self.fonts["tiny"].render(chess.square_name(g.square), True, theme.TEXT),
+                self.fonts["tiny"].render(render.frac_str(g.prob), True, theme.TEXT), float(g.prob))
+                for g in gs]
+        name_w = max(s.get_width() for s, _, _ in rows)
+        frac_w = max(s.get_width() for _, s, _ in rows)
+        w = max(header_s.get_width(), name_w + p(8) + bar_w + p(8) + frac_w,
+                hint_s.get_width()) + pad * 2
+        h = header_s.get_height() + p(6) + len(rows) * row_h + p(6) + hint_s.get_height() + pad * 2
+        box = self._popover_rect(anchor, (w, h))
+        self._popover_bg(surf, box)
+
+        x, y = box.left + pad, box.top + pad
+        surf.blit(header_s, (x, y))
+        y += header_s.get_height() + p(6)
+        for name_s, frac_s, frac in rows:
+            surf.blit(name_s, (x, y + row_h // 2 - name_s.get_height() // 2))
+            track = pygame.Rect(x + name_w + p(8), y + row_h // 2 - p(5), bar_w, p(10))
+            self._hbar(surf, track, frac, self._aura_color(pid), self._tint(theme.TEXT_DIM, 90),
+                      radius=p(4))
+            surf.blit(frac_s, (track.right + p(8), y + row_h // 2 - frac_s.get_height() // 2))
+            y += row_h
+        y += p(6)
+        surf.blit(hint_s, (x, y))
 
     def _draw_log_and_tray(self, surf, app, x, log_top, bottom=None):
         p = theme.px

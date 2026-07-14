@@ -24,7 +24,10 @@
       "Bash(python demo_fraction_visibility.py)",
       "Bash(cd \"c:\\\\Users\\\\karel\\\\Documents\\\\Python\\\\Quantum chess\" && rm -f demo_fraction_visibility.py fraction_visibility_demo.png && git status)",
       "Bash(git push *)",
-      "Bash(git merge *)"
+      "Bash(git merge *)",
+      "Bash(git status *)",
+      "Bash(git restore *)",
+      "Bash(gh pr create --title 'Add tiger piece set, vector-traced from user artwork' --body ' *)"
     ],
     "additionalDirectories": [
       "c:\\Users\\karel\\Documents\\Python\\Quantum chess"

@@ -74,8 +74,10 @@ def _clamp(c):
     return tuple(max(0, min(255, int(v))) for v in c)
 
 
-def _ink_for(color):
-    """Near-black or near-white text, whichever contrasts against `color`."""
+def ink_for(color):
+    """Near-black or near-white, whichever contrasts against `color`. Used for
+    a token's ink, and for the rim the tiger piece set draws around its
+    team-coloured silhouette (see ui/pieces.py)."""
     r, g, b = color
     luminance = 0.299 * r + 0.587 * g + 0.114 * b
     return (25, 22, 18) if luminance > 140 else (235, 232, 225)
@@ -227,10 +229,10 @@ def _cyberpunk_palette(white_color, black_color):
         SPLIT_PICK_RING=(0, 224, 255),
         WHITE_TOKEN=white_token,
         WHITE_TOKEN_BORDER=_clamp(white_color),
-        WHITE_INK=_ink_for(white_token),
+        WHITE_INK=ink_for(white_token),
         BLACK_TOKEN=black_token,
         BLACK_TOKEN_BORDER=_clamp(black_color),
-        BLACK_INK=_ink_for(black_token),
+        BLACK_INK=ink_for(black_token),
         # Team-name text colours = each side's own vivid neon accent.
         WHITE_LABEL=_clamp(white_color),
         BLACK_LABEL=_clamp(black_color),

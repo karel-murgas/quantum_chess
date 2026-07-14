@@ -145,6 +145,20 @@ def test_toggle_mode_respects_splitting_disabled():
     assert app.mode == "move"
 
 
+def test_split_stay_disabled_withholds_source_square():
+    app = _new_app(split_stay_enabled=False)
+    app.toggle_mode()
+    _click(app, chess.B1)          # knight
+    assert chess.B1 not in app._legal_by_square()   # own square no longer offered
+
+    _click(app, chess.A3)          # first branch: move
+    assert app.split_pick_a == chess.A3
+    _click(app, chess.B1)          # not a legal second branch -- re-selects the ghost instead
+    assert app.selected == chess.B1
+    assert app.split_pick_a is None
+    assert app.qb.turn == chess.WHITE               # nothing was consumed
+
+
 # -------------------------------------------------------------- promotion
 def test_promotion_picker_then_choice_executes():
     app = _new_app()
@@ -470,17 +484,27 @@ def test_mass_split_toggle_hidden_when_mass_moves_off():
     m.splitting_enabled = True
     m.mass_movement = False
     keys = {key for key, _label, _active in m._dial_specs()}
-    assert keys == {"split", "mass"}
+    assert keys == {"split", "split_stay", "mass"}
     assert "mass_split" not in m._dial_rects()
 
 
-def test_all_three_toggles_visible_when_everything_on():
+def test_all_toggles_visible_when_everything_on():
     m = Menu(_SCREEN)
     m.splitting_enabled = True
     m.mass_movement = True
     m.mass_split = True
+    m.mass_all_must_act = True
     keys = {key for key, _label, _active in m._dial_specs()}
-    assert keys == {"split", "mass", "mass_split"}
+    assert keys == {"split", "split_stay", "mass", "mass_split", "mass_all_must_act"}
+
+
+def test_all_must_act_toggle_hidden_when_mass_moves_off():
+    m = Menu(_SCREEN)
+    m.splitting_enabled = True
+    m.mass_movement = False
+    keys = {key for key, _label, _active in m._dial_specs()}
+    assert "mass_all_must_act" not in keys
+    assert "mass_all_must_act" not in m._dial_rects()
 
 
 def test_turning_off_splitting_cascades_off_mass_and_mass_split():
@@ -488,11 +512,71 @@ def test_turning_off_splitting_cascades_off_mass_and_mass_split():
     m.splitting_enabled = True
     m.mass_movement = True
     m.mass_split = True
+    m.mass_all_must_act = True
     rects = m._dial_rects()
     m.handle_click(rects["split"].center)   # toggle Splitting off
     assert m.splitting_enabled is False
     assert m.mass_movement is False
     assert m.mass_split is False
+    assert m.mass_all_must_act is False
+
+
+def test_turning_off_mass_moves_cascades_off_mass_split_and_all_must_act():
+    m = Menu(_SCREEN)
+    m.splitting_enabled = True
+    m.mass_movement = True
+    m.mass_split = True
+    m.mass_all_must_act = True
+    rects = m._dial_rects()
+    m.handle_click(rects["mass"].center)   # toggle Mass moves off
+    assert m.mass_movement is False
+    assert m.mass_split is False
+    assert m.mass_all_must_act is False
+
+
+def test_mass_all_must_act_toggle_flips_and_reaches_build_config():
+    m = Menu(_SCREEN)
+    m.splitting_enabled = True
+    m.mass_movement = True
+    rects = m._dial_rects()
+    m.handle_click(rects["mass_all_must_act"].center)
+    assert m.mass_all_must_act is True
+    assert m._build_config().mass_all_must_act is True
+
+
+def test_dial_tree_positions_children_under_their_parent():
+    """The mass-split/all-must-act pair should be centered under the Mass
+    moves box, not under the whole screen -- confirming the tree layout
+    actually branches per-parent instead of just centering every row."""
+    m = Menu(_SCREEN)
+    m.splitting_enabled = True
+    m.mass_movement = True
+    m.mass_split = True
+    m.mass_all_must_act = True
+    rects = m._dial_rects()
+    mass_cx = rects["mass"].centerx
+    children_cx = (rects["mass_split"].centerx + rects["mass_all_must_act"].centerx) / 2
+    assert abs(children_cx - mass_cx) <= 1
+    assert rects["mass_split"].top > rects["mass"].bottom
+    assert rects["split_stay"].top > rects["split"].bottom
+
+
+def test_split_stay_toggle_hidden_when_splitting_off():
+    m = Menu(_SCREEN)
+    m.splitting_enabled = False
+    keys = {key for key, _label, _active in m._dial_specs()}
+    assert keys == {"split"}
+    assert "split_stay" not in m._dial_rects()
+
+
+def test_split_stay_toggle_flips_independent_of_mass_dials():
+    m = Menu(_SCREEN)
+    m.splitting_enabled = True
+    m.mass_movement = False
+    rects = m._dial_rects()
+    m.handle_click(rects["split_stay"].center)
+    assert m.split_stay_enabled is False
+    assert m.mass_movement is False   # unaffected -- split stay has no cascade
 
 
 def test_turning_off_mass_moves_cascades_off_mass_split():

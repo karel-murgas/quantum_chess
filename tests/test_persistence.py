@@ -183,7 +183,8 @@ def test_load_teams_rejects_unknown_version(tmp_path):
 def test_save_last_settings_then_load_round_trips_via_disk(tmp_path):
     path = tmp_path / "nested" / "last_settings.json"   # parent dir doesn't exist yet
     config = GameConfig(collapse_mode=CollapseMode.PARTIAL, splitting_enabled=True,
-                        mass_movement=True, mass_split=True, seed=99,
+                        split_stay_enabled=False,
+                        mass_movement=True, mass_split=True, mass_all_must_act=True, seed=99,
                         theme="cyberpunk", white_piece_set="neon", black_piece_set="merida",
                         white_name="Alice", black_name="Bob",
                         white_color=(255, 46, 199), black_color=(0, 224, 255))
@@ -194,8 +195,10 @@ def test_save_last_settings_then_load_round_trips_via_disk(tmp_path):
     assert data == {
         "collapse_mode": CollapseMode.PARTIAL,
         "splitting_enabled": True,
+        "split_stay_enabled": False,
         "mass_movement": True,
         "mass_split": True,
+        "mass_all_must_act": True,
         "theme": "cyberpunk",
         "white_piece_set": "neon",
         "black_piece_set": "merida",

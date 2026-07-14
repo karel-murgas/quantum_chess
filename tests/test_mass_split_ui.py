@@ -171,6 +171,36 @@ def test_split_with_a_staying_branch():
     assert app.plan[chess.A1] == (chess.A4, chess.A1)
 
 
+def test_split_stay_disabled_withholds_source_square_as_second_branch():
+    app, rook = _split_app()
+    app.config.split_stay_enabled = False
+    _click(app, chess.A1)
+    app.toggle_mode()              # split mode
+    _click(app, chess.A1)
+    assert chess.A1 not in app.plan_legal()         # own square no longer offered
+    _click(app, chess.A4)          # first branch: move
+    assert app.plan_pick_a == chess.A4
+    assert chess.A1 not in app.plan_legal()         # nor as the second branch
+    _click(app, chess.A1)          # not a legal target, but a1 is itself a planned
+                                    # ghost -> re-selects it for editing instead
+    assert app.plan_active == chess.A1
+    assert app.plan_pick_a is None
+    assert app.plan[chess.A1] == (chess.A4,)        # branch A's provisional single move stands
+
+
+def test_split_stay_disabled_does_not_affect_move_only_leg():
+    """A ghost that's simply held in place (not splitting) is unaffected by the
+    dial -- that's a plain move leg, not a split, per CLAUDE.md's clarification
+    that split stay only governs actual splits."""
+    app, rook = _split_app(mass_split=True)
+    app.config.split_stay_enabled = False
+    _click(app, chess.A1)          # enter planning in move mode
+    _click(app, chess.A1)          # arm a1
+    _click(app, chess.A1)          # hold in place -- a move-only leg, not a split
+    assert app.plan[chess.A1] == (chess.A1,)
+    assert app.plan_active is None
+
+
 def test_confirm_split_resolves_without_conflict():
     app, rook = _split_app()
     _click(app, chess.A1)
@@ -252,3 +282,53 @@ def test_split_promotion_branch_prompts_per_branch():
     _click(app, chess.H2)          # h2 holds
     _click_rect(app, render.mass_controls_rects()["confirm"])
     assert app.qb.pieces[pawn.id].ptype == chess.ROOK
+
+
+# --------------------------------------------------- "all ghosts must act"
+def test_plan_fully_acted_is_false_while_a_ghost_still_defaults_to_stay():
+    app, rook = _split_app()
+    _click(app, chess.A1)          # enter planning; both legs default to "stay"
+    assert app._plan_fully_acted() is False
+    _click(app, chess.A1)          # arm a1
+    _click(app, chess.A4)          # a1 moves
+    assert app.plan[chess.A1] == (chess.A4,)
+    assert app._plan_fully_acted() is False   # h1 still untouched
+    _click(app, chess.H1)
+    _click(app, chess.H4)          # h1 moves too
+    assert app._plan_fully_acted() is True
+
+
+def test_confirm_blocked_while_a_ghost_has_not_acted():
+    app, rook = _split_app()
+    app.config.mass_all_must_act = True
+    _click(app, chess.A1)          # enter planning
+    _click(app, chess.A1)
+    _click(app, chess.A4)          # a1 acts; h1 is still left at its default stay
+    _click_rect(app, render.mass_controls_rects()["confirm"])
+    assert app.is_planning()                 # confirm was refused
+    assert app.qb.turn == chess.WHITE
+    assert app.plan[chess.A1] == (chess.A4,)  # the in-progress plan survives untouched
+
+
+def test_confirm_succeeds_once_every_ghost_has_acted():
+    app, rook = _split_app()
+    app.config.mass_all_must_act = True
+    _click(app, chess.A1)
+    _click(app, chess.A1)
+    _click(app, chess.A4)          # a1 acts
+    _click(app, chess.H1)
+    _click(app, chess.H4)          # h1 acts too -- every ghost has now moved
+    _click_rect(app, render.mass_controls_rects()["confirm"])
+    assert not app.is_planning()
+    assert app.qb.turn == chess.BLACK
+
+
+def test_enter_key_confirm_is_also_blocked_while_a_ghost_has_not_acted():
+    app, rook = _split_app()
+    app.config.mass_all_must_act = True
+    _click(app, chess.A1)
+    _click(app, chess.A1)
+    _click(app, chess.A4)          # only a1 acts
+    app.handle_keydown(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RETURN))
+    assert app.is_planning()
+    assert app.qb.turn == chess.WHITE

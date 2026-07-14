@@ -1,14 +1,14 @@
 """Movement + superposition rules for Quantum Chess.
 
-Milestone 1: classical movement, capture-the-king.
-Milestone 2 (this): a piece may be *superposed* into several ghosts. A turn is one
-action on one ghost — **move** it, or **split** it into two (``p -> p/2, p/2``).
-Ghosts of the same piece **merge** (probabilities add) when they land together.
+Classical movement plus superposition: a piece may be split into several ghosts.
+A turn is one action on one ghost — **move** it, or **split** it into two
+(``p -> p/2, p/2``). Ghosts of the same piece **merge** (probabilities add) when
+they land together.
 
 python-chess is used only as a geometric movement oracle (``Board.attacks``) over
 the **solid** pieces; ghosts are handled by us. Occupancy invariant: **at most one
 ghost per square** — same-piece ghosts merge, and landing on a *different* piece's
-ghost is a "contact" (collapse), which is deferred to Milestone 3.
+ghost is a "contact" (collapse), resolved in collapse.py.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ class MoveKind(Enum):
     RELOCATE = auto()        # onto an empty square
     MERGE = auto()           # onto another ghost of the *same* piece (probs add)
     CAPTURE_SOLID = auto()   # onto an enemy *solid* piece (deterministic, p=1)
-    CONTACT = auto()         # onto/through a *different* piece's ghost -> collapse (M3)
+    CONTACT = auto()         # onto/through a *different* piece's ghost -> collapse
 
 
 @dataclass(frozen=True)
@@ -323,7 +323,7 @@ def _pawn_dest(qb, board, g: Ghost, color: bool) -> list[Move]:
         elif occ is None and target == qb.ep_square:
             victim = qb.ghost_at(target - forward)
             # En passant against a superposed victim pawn is a deferred edge case
-            # (see PLAN.md); only offer it while the victim is solid/certain.
+            # (see docs/ENGINE.md); only offer it while the victim is solid/certain.
             if victim is not None and qb.is_solid(victim.piece_id):
                 emit(target, MoveKind.CAPTURE_SOLID, cap_id=victim.piece_id, ep=True)
 

@@ -1,12 +1,10 @@
-"""UI skins -- swappable drawing languages for the board + panel (see
-UI_REDESIGN.md for the design history).
+"""UI skins -- swappable drawing languages for the board + panel (design
+history in docs/HISTORY.md).
 
-The redesign started as a 3-variant live-switching demo (``demo_ui.py``,
-since removed); after playtesting, **Quantum HUD** and **Clarity / Data-viz**
-were kept as the two views a player can switch between during a real match,
-and **Polished Evolution** was dropped. ``App`` (see ``ui/app.py``) now owns
-one instance of each permanently -- there is no more "skin is None" classic
-fallback; the game always renders through one of these two.
+**Quantum HUD** and **Clarity / Data-viz** are the two views a player can switch
+between during a real match. ``App`` (see ``ui/app.py``) owns one instance of
+each permanently -- there is no "skin is None" classic fallback; the game always
+renders through one of these two.
 
 ``build_skins()`` constructs one instance of each (fonts are built in
 ``__init__``, so call it only after ``pygame.font`` is ready). ``SKIN_CLASSES``

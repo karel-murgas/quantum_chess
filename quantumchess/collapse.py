@@ -1,8 +1,8 @@
-"""Collapse resolution — the quantum core of Quantum Chess (Milestone 3).
+"""Collapse resolution — the quantum core of Quantum Chess.
 
 A ``CONTACT`` move (see ``rules.MoveKind``) means the mover's path touches at
 least one ghost belonging to a *different* piece. This module resolves that with
-a seeded RNG, per PLAN.md:
+a seeded RNG (see docs/ENGINE.md):
 
   1. Measure the mover: is it really at its source square (prob ``p``)?
      - No: the move fizzles. The mover's *other* ghosts are unaffected by this

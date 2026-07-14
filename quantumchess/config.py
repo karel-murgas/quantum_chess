@@ -1,4 +1,4 @@
-"""Match-setup configuration — the v1 dials (see PLAN.md).
+"""Match-setup configuration — the v1 dials (see docs/ENGINE.md).
 
 Kept in its own module (not game.py) so both game.py and collapse.py can import
 it without a circular dependency.
@@ -21,11 +21,13 @@ class CollapseMode(Enum):
 class GameConfig:
     collapse_mode: CollapseMode = CollapseMode.FULL
     splitting_enabled: bool = True
+    split_stay_enabled: bool = True    # a split may offer the source square as one branch (needs splitting_enabled)
     mass_movement: bool = False        # allow moving *all* of a piece's ghosts in one planned turn
     mass_split: bool = False           # (requires mass_movement) each ghost may move *or* split in a mass turn
+    mass_all_must_act: bool = False    # (requires mass_movement) every ghost must move/split -- none may just stay
     seed: Optional[int] = None
     theme: str = "origin"              # "origin" | "cyberpunk"
-    # Board art, chosen per team ("cburnett"|"merida"|"neon"|"unicode").
+    # Board art, chosen per team (see ui/pieces.py PIECE_SETS for the full list).
     white_piece_set: str = "cburnett"
     black_piece_set: str = "cburnett"
     white_name: str = "White"

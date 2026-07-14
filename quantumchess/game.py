@@ -1,8 +1,8 @@
 """Game orchestration.
 
-Milestone 1 provides a seeded random self-play driver (classical rules only,
-used by the ASCII demo and the M1 tests). ``GameConfig``/``CollapseMode`` now
-live in config.py; re-exported here for convenience.
+Provides a seeded random self-play driver (classical rules only), used by the
+standard-chess movement tests. ``GameConfig``/``CollapseMode`` live in config.py;
+re-exported here for convenience.
 """
 
 from __future__ import annotations

@@ -62,28 +62,27 @@ quantumchess/ui/      # pygame layer (the only place pygame is imported)
 quantumchess/ui/skins/# the two switchable visual themes (HUD, Clarity)
 tests/                # pytest suite for engine + UI
 main.py               # entry point: python main.py
-demo_m1.py..demo_m3.py# headless milestone demos (no pygame needed)
 ```
 
 See **[ARCHITECTURE.md](ARCHITECTURE.md)** for how the pieces fit together,
-and **[PLAN.md](PLAN.md)** for the full ruleset and design rationale.
+and **[docs/ENGINE.md](docs/ENGINE.md)** for the full ruleset and design rationale.
 
 ## Documentation map
 
 | File | Purpose |
 |---|---|
-| [PLAN.md](PLAN.md) | Living design spec — locked rules, dials, milestones |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Module-by-module technical map |
-| [CLAUDE.md](CLAUDE.md) | Detailed engineering log for AI-assisted development (Claude Code) |
+| [docs/ENGINE.md](docs/ENGINE.md) | Engine mechanics in depth — ruleset, dials, collapse, mass move/split, castling, check |
+| [docs/UI.md](docs/UI.md) | UI mechanics in depth — rendering pipeline, skins, planning, menu |
+| [docs/HISTORY.md](docs/HISTORY.md) | Dated build log — what shipped, why, which playtest prompted it |
+| [CLAUDE.md](CLAUDE.md) | Working agreement + invariants for AI-assisted development (Claude Code) |
 | [HOW_TO_PLAY.md](HOW_TO_PLAY.md) | Player-facing rules and controls |
-| [UI_REDESIGN.md](UI_REDESIGN.md) | History of the UI skin redesign playtest |
 | [ONLINE_PLAY.md](ONLINE_PLAY.md) | Design notes for two-player online play (not yet built) |
-| [options.md](options.md) | Original design-dial brainstorm |
 
 ## Status
 
-All milestones through M4 (playable pygame UI) are complete; see
-[PLAN.md](PLAN.md) for the milestone checklist and known deferred edge cases.
+The game is playable end to end (pygame UI, save/load, two skins). See
+[docs/ENGINE.md](docs/ENGINE.md) for the ruleset and known deferred edge cases.
 
 ## License
 
