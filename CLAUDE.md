@@ -394,9 +394,15 @@ really was.
       each cburnett silhouette recoloured to the side's `theme.WHITE_NEON`/
       `BLACK_NEON` via a numpy-free `_recolor` — BLEND_RGBA_MAX floods rgb to
       white keeping each pixel's alpha, then BLEND_RGBA_MULT stamps that alpha
-      onto a flat colour fill — plus a glow), and `unicode` (the original glyph
-      look, drawn by the font path). `render_token` composites a soft drop
-      shadow (classic sets) or coloured glow (neon) via `gaussian_blur`, cached.
+      onto a flat colour fill — plus a glow), `tiger` (added 2026-07-14, see
+      below), and `unicode` (the original glyph
+      look, drawn by the font path). A set is either *literal* (its SVGs are
+      drawn as-is: cburnett/merida) or *tinted* (`_TINTED`, a `{set -> base set
+      supplying the shapes}` map: neon borrows cburnett's silhouettes, tiger has
+      its own) — `render_art` recolours a tinted set to `theme.team_neon(color)`.
+      `render_token` composites a soft drop
+      shadow (classic sets), a coloured glow (neon), or a contrast rim (tiger)
+      via `gaussian_blur`, cached.
       Two caches: raw SVG rasters keyed `(set, code, size)` (theme-independent,
       never invalidated) and composited tokens keyed by a revision counter that
       `set_active` bumps (so a mid-match theme/colour/set change repaints without
@@ -415,6 +421,28 @@ really was.
       renderer that branches on the set (`render.draw_token`/`blit_piece_art`/
       `draw_promotion_picker`, the skins' `draw_token`) passes the piece's
       `color`, so White can be `cburnett` while Black is `neon` on the same board.
+    - **The `tiger` set** (added 2026-07-14, user supplied `assets/tiger_set.png`
+      — a sheet of tiger-themed figures — and asked for SVGs of them as a new
+      set): crowned tiger faces for the king/queen, a tiger profile for the
+      knight, a stylized flame/leaf bishop, a striped rook, a paw pawn. The sheet
+      is a **raster**, so the SVGs were **vector-traced** from it by
+      `tools/trace_tiger.py` (build-time only, needs `potracer`+`pillow`+`numpy`;
+      the game itself never imports them — it just loads the committed SVGs).
+      The tracer splits the sheet into figures by ink-projection row/column
+      gaps, traces each into Béziers (note: `potrace.Bitmap` inverts internally,
+      so it must be handed the **negated** ink mask, else it traces the
+      background), and writes all six into **one shared square canvas** so the
+      sheet's own relative piece sizes survive the rasterizer's fit-to-token-box
+      — except the paw, scaled ×1.6 (at the sheet's 0.39-of-a-king it read as a
+      speck on the board). The art has **no light/dark pair**, only one
+      silhouette per piece, so tiger is a **tinted** set (`_TINTED`): `w*.svg`
+      and `b*.svg` hold the same shape and the colour comes from each team's own
+      colour at runtime, exactly like neon. Because a team colour can land
+      anywhere on the light/dark range (a pale tiger would vanish on a light
+      square), `render_token` gives it a **contrast rim** — the silhouette
+      recoloured to `theme.ink_for(tint)` (renamed from the private `_ink_for`
+      to be reusable here), blurred and blitted 3× so it's near-opaque at the
+      edge and fades out softly. On cyberpunk that rim reads as a glow for free.
     - **`theme.SCALE` supersampling** — the whole game frame is drawn at
       `SCALE`× (=2) the base layout resolution onto an offscreen surface, then
       smooth-scaled to fit the window (see `present.py`) — downscaling a 2x
@@ -843,7 +871,7 @@ really was.
 - Demo (M1 random game): `python demo_m1.py [seed]`
 - Demo (M2 superposition): `python demo_m2.py`
 - Demo (M3 collapse): `python demo_m3.py [seed]` — try seeds 1-5, each gives a different outcome
-- Tests: `python -m pytest -q`  (208 passing). UI tests need `SDL_VIDEODRIVER=dummy` in
+- Tests: `python -m pytest -q`  (214 passing). UI tests need `SDL_VIDEODRIVER=dummy` in
   the environment (set automatically at the top of `test_m4_ui.py`, but harmless to
   also export it yourself: `SDL_VIDEODRIVER=dummy python -m pytest -q`).
 - `HOW_TO_PLAY.md` (repo root) — player-facing rules/controls guide for the user and their friend.
@@ -1208,6 +1236,19 @@ really was.
       passing (`test_mass_split_ui.py` gained the move-mode-commits-single
       regression + a toggle-mid-plan test; its split-gesture tests now toggle
       into Split mode first).
+      Later 2026-07-14, a fifth piece set — **tiger** — was added (user dropped
+      `assets/tiger_set.png`, a sheet of tiger-themed chess figures, and asked
+      for SVGs of them as a new set). The sheet is a raster, so the SVGs are
+      **vector-traced** from it by `tools/trace_tiger.py` (a build-time script,
+      committed so the art is regenerable; the game only ever loads the resulting
+      SVGs). Since the artwork has just one silhouette per piece (no light/dark
+      pair), tiger is a **team-tinted** set like neon, with a contrast rim so a
+      pale team colour still reads on a light square — see the `ui/pieces.py`
+      writeup above for the full mechanism (`_TINTED`, `theme.ink_for`). It shows
+      up in the menu's per-team piece-set rows automatically (both rows are built
+      from `pieces.available()`) and persists like any other set choice. 214 tests
+      passing (`test_pieces.py` gained tiger rasterization, per-side tint,
+      same-shape-both-sides, and contrast-rim coverage).
 - [ ] **M5** — (menu dials already landed in M4; this milestone folds into it —
       remaining polish items only, e.g. richer dial explanations in-menu).
 - [ ] **M6** — polish pass (see below for what's left).
