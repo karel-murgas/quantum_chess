@@ -74,7 +74,10 @@ and **[PLAN.md](PLAN.md)** for the full ruleset and design rationale.
 |---|---|
 | [PLAN.md](PLAN.md) | Living design spec — locked rules, dials, milestones |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Module-by-module technical map |
-| [CLAUDE.md](CLAUDE.md) | Detailed engineering log for AI-assisted development (Claude Code) |
+| [docs/ENGINE.md](docs/ENGINE.md) | Engine mechanics in depth — collapse, mass move/split, castling, check |
+| [docs/UI.md](docs/UI.md) | UI mechanics in depth — rendering pipeline, skins, planning, menu |
+| [docs/HISTORY.md](docs/HISTORY.md) | Dated build log — what shipped, why, which playtest prompted it |
+| [CLAUDE.md](CLAUDE.md) | Working agreement + invariants for AI-assisted development (Claude Code) |
 | [HOW_TO_PLAY.md](HOW_TO_PLAY.md) | Player-facing rules and controls |
 | [UI_REDESIGN.md](UI_REDESIGN.md) | History of the UI skin redesign playtest |
 | [ONLINE_PLAY.md](ONLINE_PLAY.md) | Design notes for two-player online play (not yet built) |

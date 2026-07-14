@@ -214,7 +214,7 @@ class ClaritySkin(BaseSkin):
         self.draw_token(surf, qb.turn, chess.KING, (hero.x + p(42), hero.centery), radius=p(24))
         surf.blit(self.fonts["hero"].render(config.team_name(qb.turn), True, theme.TEXT),
                   (hero.x + p(74), hero.y + p(10)))
-        self._caps_label(surf, "to move", (hero.x + p(76), hero.y + p(42)))
+        self._caps_label(surf, "to move", (hero.x + p(76), hero.y + p(48)))
         if config.splitting_enabled:
             mode_col = theme.SPLIT_PICK_RING if app.mode == "split" else theme.LEGAL_MOVE_DOT
             self._chip(surf, app.mode.upper(), (hero.right - p(34), hero.y + p(18)),

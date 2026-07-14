@@ -42,6 +42,8 @@ class Menu:
         self.white_color = theme.DEFAULT_WHITE_COLOR
         self.black_color = theme.DEFAULT_BLACK_COLOR
         self.active_field = None      # "white_name" | "black_name" | None
+        self.white_piece_open = False  # is the white piece-set dropdown expanded?
+        self.black_piece_open = False
 
         if initial_config is not None:
             self.collapse_mode = initial_config.collapse_mode
@@ -80,24 +82,27 @@ class Menu:
             "cyberpunk": pygame.Rect(cx + 20, 232, 200, 40),
         }
 
-        # Piece-set picker, one row per team (each side chooses its own art):
-        # a team label on the left, then one button per set with a small king
-        # preview drawn in that team's colour.
-        self._piece_label_w = 64
-        self.white_piece_rects = self._piece_row_rects(cx, 300)
-        self.black_piece_rects = self._piece_row_rects(cx, 346)
+        self.white_name_rect = pygame.Rect(cx - 320, 300, 300, 34)
+        self.black_name_rect = pygame.Rect(cx + 20, 300, 300, 34)
+        self.swap_rect = pygame.Rect(cx - 20, 300, 40, 34)
 
-        self.white_name_rect = pygame.Rect(cx - 320, 412, 300, 34)
-        self.black_name_rect = pygame.Rect(cx + 20, 412, 300, 34)
-        self.swap_rect = pygame.Rect(cx - 20, 412, 40, 34)
+        # Piece-set picker, one dropdown per team (each side chooses its own
+        # art), sitting directly under Teams next to that team's colour
+        # swatches -- closed it's just a button showing the current set with
+        # a small king preview; open it drops a same-width option list below
+        # (see _piece_option_rects/_draw_piece_options).
+        dd_w, dd_h = 140, 38
+        piece_row_y = 364
+        self.white_piece_dropdown_rect = pygame.Rect(cx - 320, piece_row_y, dd_w, dd_h)
+        self.black_piece_dropdown_rect = pygame.Rect(cx + 20, piece_row_y, dd_w, dd_h)
 
-        self.white_swatch_rects = self._swatch_rects(cx - 320)
-        self.black_swatch_rects = self._swatch_rects(cx + 20)
+        self.white_swatch_rects = self._swatch_rects(cx - 320 + dd_w + 20, piece_row_y)
+        self.black_swatch_rects = self._swatch_rects(cx + 20 + dd_w + 20, piece_row_y)
 
         # One row: Save Teams | Reroll seed | Load Teams
-        self.team_save_rect = pygame.Rect(cx - 330, 556, 200, 38)
-        self.reroll_rect = pygame.Rect(cx - 100, 556, 200, 38)
-        self.team_load_rect = pygame.Rect(cx + 130, 556, 200, 38)
+        self.team_save_rect = pygame.Rect(cx - 330, 470, 200, 38)
+        self.reroll_rect = pygame.Rect(cx - 100, 470, 200, 38)
+        self.team_load_rect = pygame.Rect(cx + 130, 470, 200, 38)
         self.team_status = ""       # transient feedback for the last save/load
 
         # Mid-game, Start doubles as "New Game" (same rect, relabeled) and
@@ -105,31 +110,28 @@ class Menu:
         # out without resetting the board. Pre-game there's nothing to resume
         # to, so Start alone stays centered as it always has.
         if self.in_game:
-            self.resume_rect = pygame.Rect(cx - 210, 632, 200, 50)
-            self.start_rect = pygame.Rect(cx + 10, 632, 200, 50)
+            self.resume_rect = pygame.Rect(cx - 210, 580, 200, 50)
+            self.start_rect = pygame.Rect(cx + 10, 580, 200, 50)
         else:
             self.resume_rect = None
-            self.start_rect = pygame.Rect(cx - 100, 632, 200, 50)
+            self.start_rect = pygame.Rect(cx - 100, 580, 200, 50)
 
-    def _piece_row_rects(self, cx, y):
-        """One team's piece-set buttons: {set_key -> Rect}, laid out to the
-        right of a fixed-width team label."""
-        pw, pgap = 148, 8
-        n = len(pieces.PIECE_SETS)
-        grp_w = self._piece_label_w + 12 + n * pw + (n - 1) * pgap
-        bx = cx - grp_w // 2 + self._piece_label_w + 12
-        return {key: pygame.Rect(bx + i * (pw + pgap), y, pw, 40)
+    def _piece_option_rects(self, dropdown_rect):
+        """{set_key -> Rect} for a dropdown's open option list, one row per
+        set stacked directly below the button, same width as it."""
+        h = 34
+        return {key: pygame.Rect(dropdown_rect.x, dropdown_rect.bottom + i * h, dropdown_rect.width, h)
                 for i, (key, _label) in enumerate(pieces.PIECE_SETS)}
 
     @staticmethod
-    def _swatch_rects(x0):
+    def _swatch_rects(x0, y0):
         size, gap = 26, 5
         rects = []
         for i, _ in enumerate(theme.SWATCHES):
             col = i % 4
             row = i // 4
             x = x0 + col * (size + gap)
-            y = 474 + row * (size + gap)
+            y = y0 + row * (size + gap)
             rects.append(pygame.Rect(x, y, size, size))
         return rects
 
@@ -190,6 +192,25 @@ class Menu:
         Resume button -- ``App`` (see ``open_settings``/``_handle_settings_click``)
         tells those apart to decide whether to reset the board or just apply
         the dial/cosmetic changes to the match in progress."""
+        # An open piece-set dropdown is modal: the click either lands on one
+        # of its options (select + close) or anywhere else (just close it,
+        # same as clicking away from any dropdown) -- either way it doesn't
+        # fall through to whatever the option list is currently overlapping.
+        if self.white_piece_open:
+            for key, r in self._piece_option_rects(self.white_piece_dropdown_rect).items():
+                if r.collidepoint(pos):
+                    self.white_piece_set = key
+                    break
+            self.white_piece_open = False
+            return None
+        if self.black_piece_open:
+            for key, r in self._piece_option_rects(self.black_piece_dropdown_rect).items():
+                if r.collidepoint(pos):
+                    self.black_piece_set = key
+                    break
+            self.black_piece_open = False
+            return None
+
         if self.white_name_rect.collidepoint(pos):
             self.active_field = "white_name"
             return None
@@ -220,16 +241,12 @@ class Menu:
             self.theme_name = "origin"
         elif self.theme_rects["cyberpunk"].collidepoint(pos):
             self.theme_name = "cyberpunk"
-        elif any(r.collidepoint(pos) for r in self.white_piece_rects.values()):
-            for key, r in self.white_piece_rects.items():
-                if r.collidepoint(pos):
-                    self.white_piece_set = key
-                    break
-        elif any(r.collidepoint(pos) for r in self.black_piece_rects.values()):
-            for key, r in self.black_piece_rects.items():
-                if r.collidepoint(pos):
-                    self.black_piece_set = key
-                    break
+        elif self.white_piece_dropdown_rect.collidepoint(pos):
+            self.white_piece_open = True
+            self.black_piece_open = False
+        elif self.black_piece_dropdown_rect.collidepoint(pos):
+            self.black_piece_open = True
+            self.white_piece_open = False
         elif self.swap_rect.collidepoint(pos):
             self._swap_teams()
         elif self.reroll_rect.collidepoint(pos):
@@ -373,38 +390,45 @@ class Menu:
         surf = font.render(label, True, text_color)
         self.screen.blit(surf, surf.get_rect(center=rect.center))
 
-    def _draw_piece_row(self, rects, selected, name, color):
-        """Draw one team's piece-set row: the team name label on the left, then
-        a button per set (preview drawn in that team's colour)."""
-        first = next(iter(rects.values()))
-        lab = self.font_small.render(name[:9], True, theme.team_label(color))
-        self.screen.blit(lab, (first.x - self._piece_label_w - 12,
-                               first.centery - lab.get_height() // 2))
-        for key, label in pieces.PIECE_SETS:
-            self._piece_set_button(rects[key], key, label, selected == key, color)
-
-    def _piece_set_button(self, rect, key, label, active, color):
-        """A piece-set option for one team: a small king preview of the set
-        (drawn in ``color``'s art) on the left, the set's name on the right,
-        highlighted when selected."""
-        bg = theme.ACCENT if active else theme.PANEL_BG
-        pygame.draw.rect(self.screen, bg, rect, border_radius=8)
-        border = theme.ACCENT if active else theme.TEXT_DIM
-        pygame.draw.rect(self.screen, border, rect, width=2 if not active else 3, border_radius=8)
-
-        icon_center = (rect.x + 26, rect.centery)
+    def _piece_icon(self, center, key, color, active):
+        """Small king preview of piece-set ``key`` drawn in ``color``'s art,
+        shared by the closed dropdown button and its option rows."""
         if key == "unicode":
             ink = (20, 20, 20) if active else theme.TEXT
             glyph = self.font_glyph.render(theme.GLYPH[chess.KING], True, ink)
-            self.screen.blit(glyph, glyph.get_rect(center=icon_center))
+            self.screen.blit(glyph, glyph.get_rect(center=center))
         else:
             glow = theme.team_neon(color) if key == "neon" else None
-            tok = pieces.render_token(key, chess.KING, color, 36, glow=glow)
-            self.screen.blit(tok, tok.get_rect(center=icon_center))
+            tok = pieces.render_token(key, chess.KING, color, 26, glow=glow)
+            self.screen.blit(tok, tok.get_rect(center=center))
 
-        text_color = (20, 20, 20) if active else theme.TEXT
-        s = self.font_small.render(label, True, text_color)
-        self.screen.blit(s, (rect.x + 50, rect.centery - s.get_height() // 2))
+    def _draw_piece_dropdown(self, rect, selected, color, open_):
+        """The closed-state button for one team's piece-set picker: a preview
+        icon, the current set's name, and a caret. Click toggles the option
+        list open (``_draw_piece_options`` draws it, directly below)."""
+        pygame.draw.rect(self.screen, theme.PANEL_BG, rect, border_radius=8)
+        border = theme.ACCENT if open_ else theme.TEXT_DIM
+        pygame.draw.rect(self.screen, border, rect, width=2, border_radius=8)
+        self._piece_icon((rect.x + 22, rect.centery), selected, color, False)
+        label = dict(pieces.PIECE_SETS)[selected]
+        s = self.font_small.render(label, True, theme.TEXT)
+        self.screen.blit(s, (rect.x + 42, rect.centery - s.get_height() // 2))
+        caret = self.font_small.render("▴" if open_ else "▾", True, theme.TEXT_DIM)
+        self.screen.blit(caret, caret.get_rect(midright=(rect.right - 8, rect.centery)))
+
+    def _draw_piece_options(self, dropdown_rect, selected, color):
+        """The open option list under a piece-set dropdown -- one row per
+        available set, highlighted when it's the current selection."""
+        for key, label in pieces.PIECE_SETS:
+            rect = self._piece_option_rects(dropdown_rect)[key]
+            active = key == selected
+            bg = theme.ACCENT if active else theme.PANEL_BG
+            pygame.draw.rect(self.screen, bg, rect)
+            pygame.draw.rect(self.screen, theme.TEXT_DIM, rect, width=1)
+            self._piece_icon((rect.x + 22, rect.centery), key, color, active)
+            text_color = (20, 20, 20) if active else theme.TEXT
+            s = self.font_small.render(label, True, text_color)
+            self.screen.blit(s, (rect.x + 42, rect.centery - s.get_height() // 2))
 
     def _name_field(self, rect, text, active):
         pygame.draw.rect(self.screen, theme.PANEL_BG, rect, border_radius=6)
@@ -446,26 +470,22 @@ class Menu:
         self._button(self.theme_rects["origin"], "Origin", self.theme_name == "origin")
         self._button(self.theme_rects["cyberpunk"], "Cyberpunk", self.theme_name == "cyberpunk")
 
-        pieces_caption = self.font_small.render("Piece sets (each team picks its own):",
-                                                True, theme.TEXT_DIM)
-        white_first = next(iter(self.white_piece_rects.values()))
-        self.screen.blit(pieces_caption, pieces_caption.get_rect(center=(w // 2, white_first.y - 14)))
-        self._draw_piece_row(self.white_piece_rects, self.white_piece_set,
-                             self.white_name.strip() or "White", chess.WHITE)
-        self._draw_piece_row(self.black_piece_rects, self.black_piece_set,
-                             self.black_name.strip() or "Black", chess.BLACK)
-
         names_caption = self.font_small.render("Team names:", True, theme.TEXT_DIM)
         self.screen.blit(names_caption, names_caption.get_rect(center=(w // 2, self.white_name_rect.y - 16)))
         self._name_field(self.white_name_rect, self.white_name, self.active_field == "white_name")
         self._name_field(self.black_name_rect, self.black_name, self.active_field == "black_name")
         self._button(self.swap_rect, "⇄", False)
 
+        teams_caption_text = ("Piece set & team colours:" if self.theme_name == "cyberpunk"
+                              else "Piece set (each team picks its own):")
+        teams_caption = self.font_small.render(teams_caption_text, True, theme.TEXT_DIM)
+        self.screen.blit(teams_caption, teams_caption.get_rect(
+            center=(w // 2, self.white_piece_dropdown_rect.y - 16)))
+        self._draw_piece_dropdown(self.white_piece_dropdown_rect, self.white_piece_set,
+                                  chess.WHITE, self.white_piece_open)
+        self._draw_piece_dropdown(self.black_piece_dropdown_rect, self.black_piece_set,
+                                  chess.BLACK, self.black_piece_open)
         if self.theme_name == "cyberpunk":
-            colors_caption = self.font_small.render(
-                "Team colours (used as accents against dark grays):", True, theme.TEXT_DIM)
-            self.screen.blit(colors_caption, colors_caption.get_rect(
-                center=(w // 2, self.white_swatch_rects[0].y - 16)))
             self._swatches(self.white_swatch_rects, self.white_color)
             self._swatches(self.black_swatch_rects, self.black_color)
 
@@ -484,3 +504,10 @@ class Menu:
             self._button(self.start_rect, "New Game", False)
         else:
             self._button(self.start_rect, "Start Game", True)
+
+        # Open piece-set option lists are drawn last so they overlay whatever
+        # they happen to span (they're modal -- see handle_click).
+        if self.white_piece_open:
+            self._draw_piece_options(self.white_piece_dropdown_rect, self.white_piece_set, chess.WHITE)
+        if self.black_piece_open:
+            self._draw_piece_options(self.black_piece_dropdown_rect, self.black_piece_set, chess.BLACK)
