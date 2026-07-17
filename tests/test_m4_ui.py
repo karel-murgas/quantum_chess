@@ -484,7 +484,7 @@ def test_mass_split_toggle_hidden_when_mass_moves_off():
     m.splitting_enabled = True
     m.mass_movement = False
     keys = {key for key, _label, _active in m._dial_specs()}
-    assert keys == {"split", "split_stay", "mass"}
+    assert keys == {"split", "collapse", "split_stay", "mass"}
     assert "mass_split" not in m._dial_rects()
 
 
@@ -495,7 +495,7 @@ def test_all_toggles_visible_when_everything_on():
     m.mass_split = True
     m.mass_all_must_act = True
     keys = {key for key, _label, _active in m._dial_specs()}
-    assert keys == {"split", "split_stay", "mass", "mass_split", "mass_all_must_act"}
+    assert keys == {"split", "collapse", "split_stay", "mass", "mass_split", "mass_all_must_act"}
 
 
 def test_all_must_act_toggle_hidden_when_mass_moves_off():

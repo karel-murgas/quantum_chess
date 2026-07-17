@@ -29,7 +29,7 @@ Python 3.13 · **`python-chess`** (movement oracle only) · **`pygame-ce`** (UI)
 
 ```bash
 python main.py                    # play (needs a real display)
-python -m pytest -q               # 231 passing
+python -m pytest -q               # 235 passing
 ```
 
 UI tests need `SDL_VIDEODRIVER=dummy` (set automatically at the top of `test_m4_ui.py`).

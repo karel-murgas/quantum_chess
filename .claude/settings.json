@@ -27,7 +27,9 @@
       "Bash(git merge *)",
       "Bash(git status *)",
       "Bash(git restore *)",
-      "Bash(gh pr create --title 'Add tiger piece set, vector-traced from user artwork' --body ' *)"
+      "Bash(gh pr create --title 'Add tiger piece set, vector-traced from user artwork' --body ' *)",
+      "Bash(python -m pytest -q -k menu)",
+      "Bash(python repro_menu.py)"
     ],
     "additionalDirectories": [
       "c:\\Users\\karel\\Documents\\Python\\Quantum chess"
