@@ -20,7 +20,7 @@ Mechanism detail lives in [ENGINE.md](ENGINE.md) / [UI.md](UI.md); this file is 
 - [x] **M5** — folded into M4 (`ui/menu.py` covers the v1 dials).
 - [x] **M6** — polish pass; v1 playable end to end.
 
-Test count: **231 passing** (2026-07-14).
+Test count: **235 passing** (2026-07-17).
 
 ---
 
@@ -253,3 +253,14 @@ Figma comments, any dropdown) dismiss via click-away/Escape/toggle instead, and 
 movement would undo the whole point of switching from hover to click (the card would vanish while
 the mouse crosses the board toward the next move). Kept the existing dismissal set: any left click,
 Escape, new game, or load — a transient "let me peek," never persisted state.
+
+## 2026-07-17
+
+**Dragon piece set.** Same request pattern as tiger/cthulhu, but from **two** sheets: the
+user supplied two dragon-themed icon sheets and asked for a set that mixes them — bishop,
+rook and pawn off the first, king, queen and knight off the second (their own pick of the
+better figure per piece). `tools/trace_dragon.py` generalizes `trace_tiger.py`/
+`trace_cthulhu.py` to read six boxes from each sheet's white-figure row, take the three
+pieces it needs from each, and lay all six onto one shared canvas sized off the largest
+figure across *both* sheets, so a sheet-A piece and a sheet-B piece land at the same
+relative scale. Team-tinted like tiger/cthulhu, same contrast rim in `render_token`.

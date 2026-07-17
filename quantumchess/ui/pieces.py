@@ -25,6 +25,11 @@ selectable art sets and is the single place that knows how to turn a
   the king/queen, a hooded acolyte for the pawn), traced from the artwork in
   ``assets/cthulhu_set.png``. Same deal as tiger: **team-tinted**, one shape per
   piece, contrast rim in ``render_token``.
+* ``"dragon"`` -- flat dragon-themed silhouettes, traced from two sheets the user
+  supplied (``assets/dragon_set_a.png``, ``assets/dragon_set_b.png``): bishop,
+  rook and pawn come from the first sheet, king, queen and knight from the
+  second. Same deal as tiger/cthulhu: **team-tinted**, one shape per piece,
+  contrast rim in ``render_token``.
 
 A set is either *literal* (its SVGs are drawn as they are: cburnett, merida) or
 *tinted* (``_TINTED``: its silhouettes are recoloured to the team colour).
@@ -56,6 +61,7 @@ PIECE_SETS = [
     ("merida", "Merida"),
     ("tiger", "Tiger"),
     ("cthulhu", "Cthulhu"),
+    ("dragon", "Dragon"),
     ("neon", "Neon"),
     ("unicode", "Unicode"),
 ]
@@ -72,7 +78,7 @@ _NEON_BASE = "cburnett"
 # Sets drawn as a solid silhouette in the side's own team colour, mapped to the
 # set whose SVGs supply the shapes (neon borrows cburnett's; tiger and cthulhu
 # have their own, a single shape per piece rather than a light/dark pair).
-_TINTED = {"neon": _NEON_BASE, "tiger": "tiger", "cthulhu": "cthulhu"}
+_TINTED = {"neon": _NEON_BASE, "tiger": "tiger", "cthulhu": "cthulhu", "dragon": "dragon"}
 
 _active = {chess.WHITE: "cburnett", chess.BLACK: "cburnett"}
 _rev = 0                       # bumped on set/theme change; keys _token_cache
@@ -180,7 +186,7 @@ def render_token(set_name: str, ptype: int, color: bool, size: int, *, glow=None
         # Two passes deepen the neon bloom without a separate bright core.
         canvas.blit(halo, (pad, pad))
         canvas.blit(halo, (pad, pad))
-    elif set_name in ("tiger", "cthulhu"):
+    elif set_name in _TINTED:
         # The silhouette is the team's own colour, which may sit anywhere on the
         # light/dark range -- a pale one on a light square (or a dark one on a
         # dark square) would vanish. A tight rim in the contrasting ink outlines

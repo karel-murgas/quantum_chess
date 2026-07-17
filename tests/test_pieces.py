@@ -25,7 +25,9 @@ def setup_function(_fn):
 
 def test_available_lists_all_sets_including_unicode():
     keys = [k for k, _label in pieces.available()]
-    assert set(keys) == {"cburnett", "merida", "tiger", "cthulhu", "neon", "unicode"}
+    assert set(keys) == {
+        "cburnett", "merida", "tiger", "cthulhu", "dragon", "neon", "unicode",
+    }
 
 
 def test_set_active_falls_back_on_unknown():
@@ -43,7 +45,7 @@ def test_set_active_is_per_side():
     assert pieces.active(chess.BLACK) == "cburnett"
 
 
-@pytest.mark.parametrize("set_name", ["cburnett", "merida", "tiger", "cthulhu"])
+@pytest.mark.parametrize("set_name", ["cburnett", "merida", "tiger", "cthulhu", "dragon"])
 def test_svg_sets_rasterize_with_content(set_name):
     art = pieces.render_art(set_name, chess.KNIGHT, chess.WHITE, 120)
     assert art.get_size() == (120, 120)
@@ -72,7 +74,7 @@ def _an_inked_pixel(art):
     raise AssertionError("silhouette has no opaque pixel")
 
 
-@pytest.mark.parametrize("set_name", ["tiger", "cthulhu"])
+@pytest.mark.parametrize("set_name", ["tiger", "cthulhu", "dragon"])
 def test_tinted_own_set_silhouette_uses_side_team_colour(set_name):
     # tiger/cthulhu are tinted sets too, but off their own bundled shapes
     for color, tint in ((chess.WHITE, theme.WHITE_NEON), (chess.BLACK, theme.BLACK_NEON)):
@@ -81,7 +83,7 @@ def test_tinted_own_set_silhouette_uses_side_team_colour(set_name):
         assert (r, g, b) == tint
 
 
-@pytest.mark.parametrize("set_name", ["tiger", "cthulhu"])
+@pytest.mark.parametrize("set_name", ["tiger", "cthulhu", "dragon"])
 def test_tinted_own_set_shapes_are_the_same_for_both_sides(set_name):
     # the source art has no light/dark pair -- the colour comes from the tint
     white = pieces._raster(set_name, chess.QUEEN, chess.WHITE, 96)
@@ -89,7 +91,7 @@ def test_tinted_own_set_shapes_are_the_same_for_both_sides(set_name):
     assert white.get_bounding_rect() == black.get_bounding_rect()
 
 
-@pytest.mark.parametrize("set_name", ["tiger", "cthulhu"])
+@pytest.mark.parametrize("set_name", ["tiger", "cthulhu", "dragon"])
 def test_tinted_own_set_token_draws_a_contrast_rim(set_name):
     # a token whose tint is pale gets a dark rim outside the art's own alpha,
     # so it still reads on a light square

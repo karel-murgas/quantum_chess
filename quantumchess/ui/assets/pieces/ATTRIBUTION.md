@@ -22,6 +22,11 @@ tentacled elder-god head for king/queen, a hooded acolyte for the pawn). One
 silhouette per piece, team-tinted at runtime the same way as tiger. Traced with
 `tools/trace_cthulhu.py`.
 
+The **dragon** set (`dragon/`) mixes two sheets the user supplied: bishop, rook
+and pawn are traced from `assets/dragon_set_a.png`, king, queen and knight from
+`assets/dragon_set_b.png`. One silhouette per piece, team-tinted at runtime the
+same way as tiger/cthulhu. Traced with `tools/trace_dragon.py`.
+
 The **neon** set in the game is not bundled art: it is generated at runtime by
 tinting the cburnett silhouettes with each team's colour and adding a glow (see
 `quantumchess/ui/pieces.py`).

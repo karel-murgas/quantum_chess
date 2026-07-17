@@ -96,17 +96,18 @@ The single place that turns a `(ptype, color)` into board art.
 | `neon` | Generated at runtime: cburnett silhouettes recoloured to the side's colour |
 | `tiger` | Vector-traced tiger figures (see below) |
 | `cthulhu` | Vector-traced Lovecraftian figures, same recipe as tiger (see below) |
+| `dragon` | Vector-traced dragon figures, mixed from two sheets (see below) |
 | `unicode` | The original glyph look, drawn by the font path |
 
 A set is either **literal** (SVGs drawn as-is: cburnett/merida) or **tinted**
 (`_TINTED`, a `{set -> base set supplying the shapes}` map: neon borrows cburnett's
-silhouettes, tiger and cthulhu have their own) — `render_art` recolours a tinted set to
+silhouettes, tiger/cthulhu/dragon have their own) — `render_art` recolours a tinted set to
 `theme.team_neon(color)`. Recolouring is numpy-free (`_recolor`): `BLEND_RGBA_MAX`
 floods rgb to white keeping each pixel's alpha, then `BLEND_RGBA_MULT` stamps that
 alpha onto a flat colour fill.
 
 `render_token` composites a soft drop shadow (classic sets), a coloured glow (neon), or
-a **contrast rim** (tiger, cthulhu) via `gaussian_blur`, cached.
+a **contrast rim** (tiger, cthulhu, dragon) via `gaussian_blur`, cached.
 
 Two caches: raw SVG rasters keyed `(set, code, size)` (theme-independent, never
 invalidated) and composited tokens keyed by a **revision counter** that `set_active`
@@ -151,6 +152,17 @@ light-blue) of the same six figures, no separate pawn row — so the tracer skip
 pawn-rescale step entirely and just reads six boxes from one row band. Also a *tinted*
 set (`_TINTED["cthulhu"] = "cthulhu"`) with the same contrast-rim treatment in
 `render_token`.
+
+### The `dragon` set
+
+Same recipe again, but off **two** sheets instead of one: `assets/dragon_set_a.png`
+supplies the bishop, rook and pawn; `assets/dragon_set_b.png` supplies the king, queen
+and knight (the user's own pick of the better figure from each sheet). Traced by
+**`tools/trace_dragon.py`**, which reads six boxes from each sheet's white-figure row,
+picks the three per sheet it needs, and lays all six onto one shared canvas sized off
+the largest figure across *both* sheets — so a piece from sheet A sits at the same
+relative scale as one from sheet B. Also a *tinted* set (`_TINTED["dragon"] = "dragon"`)
+with the same contrast-rim treatment in `render_token`.
 
 ---
 
