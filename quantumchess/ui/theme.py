@@ -152,6 +152,10 @@ def _keyword_colors(palette):
 
 
 def _origin_palette(white_color, black_color):
+    # white_color/black_color are unused here -- Origin has no colour picker
+    # (see menu.py) and its tinted piece sets (neon/tiger/cthulhu/dragon) are
+    # locked to plain black/white below, matching its classic wood-board look.
+    # Only Cyberpunk (_cyberpunk_palette) tints per-team.
     palette = dict(
         TERMS=_ORIGIN_TERMS,
         LIGHT_SQUARE=(240, 217, 181),
@@ -177,11 +181,12 @@ def _origin_palette(white_color, black_color):
         # the light side, a lightened wood-brown for the dark side.
         WHITE_LABEL=(245, 238, 220),
         BLACK_LABEL=(198, 150, 105),
-        # Vivid per-side colours the "neon" piece set tints its silhouettes
-        # with. On origin these are the (default gold / blue) team colours; on
-        # cyberpunk they're each player's chosen neon.
-        WHITE_NEON=_clamp(white_color),
-        BLACK_NEON=_clamp(black_color),
+        # Vivid per-side colours the "neon" piece set (and tiger/cthulhu/
+        # dragon) tint their silhouettes with. Origin has no colour picker,
+        # so both sides just get its own white/black token colour here;
+        # cyberpunk (below) uses each player's chosen neon instead.
+        WHITE_NEON=(248, 246, 238),
+        BLACK_NEON=(40, 37, 34),
         AURA_PALETTE=[
             (231, 76, 60), (52, 152, 219), (46, 204, 113), (241, 196, 15),
             (155, 89, 182), (26, 188, 156), (230, 126, 34), (149, 165, 166),

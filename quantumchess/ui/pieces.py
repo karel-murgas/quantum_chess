@@ -154,28 +154,33 @@ def _recolor(art: pygame.Surface, color) -> pygame.Surface:
     return out
 
 
-def render_art(set_name: str, ptype: int, color: bool, size: int) -> pygame.Surface:
-    """The piece picture alone (no shadow/glow/rim), ``size`` x ``size`` RGBA."""
+def render_art(set_name: str, ptype: int, color: bool, size: int, *, tint=None) -> pygame.Surface:
+    """The piece picture alone (no shadow/glow/rim), ``size`` x ``size`` RGBA.
+    ``tint`` overrides ``theme.team_neon(color)`` for a tinted set -- used by
+    the settings menu to preview a colour that hasn't been applied to the
+    theme yet (see ``menu.py::_piece_icon``); in-game rendering never passes
+    it, since the applied theme is already in sync there."""
     base_set = _TINTED.get(set_name)
     if base_set is not None:
         base = _raster(base_set, ptype, color, size)
-        return _recolor(base, theme.team_neon(color))
+        return _recolor(base, tint if tint is not None else theme.team_neon(color))
     return _raster(set_name, ptype, color, size)
 
 
 # -------------------------------------------------------------------- compositor
-def render_token(set_name: str, ptype: int, color: bool, size: int, *, glow=None):
+def render_token(set_name: str, ptype: int, color: bool, size: int, *, glow=None, tint=None):
     """A ready-to-blit token: the piece art with a soft drop shadow (classic
     sets), a coloured glow (``glow`` given, used by the neon set), or a contrast
     rim (the tiger/cthulhu sets). Returned surface is larger than ``size``
     (padded for the shadow/glow/rim spread) and is cached; callers apply
-    per-ghost opacity with ``set_alpha`` on a copy."""
-    key = (_rev, set_name, ptype, color, size, glow)
+    per-ghost opacity with ``set_alpha`` on a copy. See ``render_art`` for
+    ``tint``."""
+    key = (_rev, set_name, ptype, color, size, glow, tint)
     tok = _token_cache.get(key)
     if tok is not None:
         return tok
 
-    art = render_art(set_name, ptype, color, size)
+    art = render_art(set_name, ptype, color, size, tint=tint)
     pad = max(2, size // 6)
     canvas = pygame.Surface((size + 2 * pad, size + 2 * pad), pygame.SRCALPHA)
     blur = max(1, size // 18)
@@ -192,7 +197,7 @@ def render_token(set_name: str, ptype: int, color: bool, size: int, *, glow=None
         # dark square) would vanish. A tight rim in the contrasting ink outlines
         # it either way. Blitting the blurred rim repeatedly builds it up to
         # near-opaque at the edge while still fading out softly.
-        rim = _recolor(art, theme.ink_for(theme.team_neon(color)))
+        rim = _recolor(art, theme.ink_for(tint if tint is not None else theme.team_neon(color)))
         rim = pygame.transform.gaussian_blur(rim, blur)
         for _ in range(3):
             canvas.blit(rim, (pad, pad))

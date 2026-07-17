@@ -21,18 +21,23 @@ LAST_SETTINGS_PATH = Path("saves/last_settings.json")
 # "split" (Splitting) is the implicit root: everything else needs it directly
 # or indirectly.
 _DIAL_PARENT = {
+    "collapse": "split",
     "split_stay": "split",
     "mass": "split",
     "mass_split": "mass",
     "mass_all_must_act": "mass",
 }
 
-# Mouseover copy for each dial toggle and collapse-mode button (see
-# _draw_hover_tooltips). Kept as flat data, separate from the labels in
-# _dial_specs, since it doesn't depend on on/off state.
+# Mouseover copy for each dial toggle (see _draw_hover_tooltips). Kept as flat
+# data, separate from the labels in _dial_specs, since it doesn't depend on
+# on/off state.
 _DIAL_TOOLTIPS = {
     "split": "Allow a ghost to split into two branches (probability halved each) "
              "instead of only moving. Off restricts every turn to a plain move.",
+    "collapse": "What happens to the rest of a piece's ghosts on a 'not here' "
+                "result. Full resolves the whole piece to one location at once, "
+                "dropping every other ghost. Partial only removes the contacted "
+                "ghost; the rest renormalize and stay superposed.",
     "split_stay": "When a ghost splits, allow one of the two branches to be the "
                   "source square itself (\"stay + move\"). Off requires both "
                   "branches to land on a new square.",
@@ -43,13 +48,6 @@ _DIAL_TOOLTIPS = {
                   "relocate, not just move.",
     "mass_all_must_act": "Require every ghost in a mass turn to move or split -- "
                         "none may simply stay behind untouched.",
-}
-_COLLAPSE_TOOLTIPS = {
-    CollapseMode.FULL: "A 'not here' result resolves the whole piece to one "
-                       "location at once, dropping every other ghost.",
-    CollapseMode.PARTIAL: "A 'not here' result only removes the contacted ghost; "
-                          "the piece's remaining ghosts renormalize and stay "
-                          "superposed.",
 }
 
 
@@ -106,18 +104,21 @@ class Menu:
         self.font_small = pygame.font.SysFont("segoeui", 17)
         # Small symbol font for the "unicode" piece-set preview swatch.
         self.font_glyph = pygame.font.SysFont("segoeuisymbol", 30)
+        # "segoeui" is missing arrow/caret glyphs on some systems (renders as
+        # tofu boxes); "segoeuisymbol" covers them, matching font_glyph above.
+        self.font_symbol = pygame.font.SysFont("segoeuisymbol", 22)
+        self.font_symbol_small = pygame.font.SysFont("segoeuisymbol", 17)
 
         w, h = self.screen.get_size()
         cx = w // 2
-        self.collapse_full_rect = pygame.Rect(cx - 220, 112, 200, 40)
-        self.collapse_partial_rect = pygame.Rect(cx + 20, 112, 200, 40)
-        # The dial toggles below Collapse mode are laid out dynamically as a
-        # tree, not a fixed row (see _dial_rows/_dial_rects) -- which ones are
-        # visible, and how many levels deep the tree goes, depends on the
-        # current state. Everything below reserves room for the tree's tallest
-        # possible shape (3 levels: Splitting -> Split stay/Mass moves -> Mass
-        # split/All must act) so lower sections never have to move.
-        y_after_tree = 296
+        # The dial toggles (including Collapse mode, nested under Splitting)
+        # are laid out dynamically as a tree, not a fixed row (see
+        # _dial_rows/_dial_rects) -- which ones are visible, and how many
+        # levels deep the tree goes, depends on the current state. Everything
+        # below reserves room for the tree's tallest possible shape (3 levels:
+        # Splitting -> Collapse mode/Split stay/Mass moves -> Mass split/All
+        # must act) so lower sections never have to move.
+        y_after_tree = 250
 
         self.theme_rects = {
             "origin": pygame.Rect(cx - 220, y_after_tree, 200, 40),
@@ -188,6 +189,8 @@ class Menu:
         specs = [("split", f"Splitting: {'On' if self.splitting_enabled else 'Off'}",
                  self.splitting_enabled)]
         if self.splitting_enabled:
+            specs.append(("collapse", f"Collapse: {'Full' if self.collapse_mode == CollapseMode.FULL else 'Partial'}",
+                         self.collapse_mode == CollapseMode.FULL))
             specs.append(("split_stay", f"Split stay: {'On' if self.split_stay_enabled else 'Off'}",
                          self.split_stay_enabled))
             specs.append(("mass", f"Mass moves: {'On' if self.mass_movement else 'Off'}",
@@ -202,10 +205,10 @@ class Menu:
     def _dial_rows(self):
         """Visible dial keys grouped into tree levels, root first -- each level
         is exactly the children (per ``_DIAL_PARENT``) of the previous level's
-        nodes, mirroring the dependency chain (Splitting -> Split stay/Mass
-        moves -> Mass split/All must act). Feeds both ``_dial_rects`` (layout)
-        and ``draw`` (the connecting lines) so the tree's shape is described
-        once."""
+        nodes, mirroring the dependency chain (Splitting -> Collapse mode/Split
+        stay/Mass moves -> Mass split/All must act). Feeds both ``_dial_rects``
+        (layout) and ``draw`` (the connecting lines) so the tree's shape is
+        described once."""
         keys = [key for key, _label, _active in self._dial_specs()]
         keyset = set(keys)
         rows = []
@@ -228,7 +231,7 @@ class Menu:
         rows = self._dial_rows()
         w, h, gap_x, gap_y = 150, 30, 10, 10
         cx = self.screen.get_width() // 2
-        y0 = 158
+        y0 = 112
         rects = {}
         centers = {}
         for depth, row in enumerate(rows):
@@ -316,11 +319,7 @@ class Menu:
         self.active_field = None
 
         dial_rects = self._dial_rects()   # only the currently-visible toggles
-        if self.collapse_full_rect.collidepoint(pos):
-            self.collapse_mode = CollapseMode.FULL
-        elif self.collapse_partial_rect.collidepoint(pos):
-            self.collapse_mode = CollapseMode.PARTIAL
-        elif dial_rects["split"].collidepoint(pos):
+        if dial_rects["split"].collidepoint(pos):
             self.splitting_enabled = not self.splitting_enabled
             if not self.splitting_enabled:
                 # split stay, mass movement (and mass split/all-must-act with
@@ -330,6 +329,9 @@ class Menu:
                 self.mass_movement = False
                 self.mass_split = False
                 self.mass_all_must_act = False
+        elif "collapse" in dial_rects and dial_rects["collapse"].collidepoint(pos):
+            self.collapse_mode = (CollapseMode.PARTIAL if self.collapse_mode == CollapseMode.FULL
+                                  else CollapseMode.FULL)
         elif "split_stay" in dial_rects and dial_rects["split_stay"].collidepoint(pos):
             self.split_stay_enabled = not self.split_stay_enabled
         elif "mass" in dial_rects and dial_rects["mass"].collidepoint(pos):
@@ -498,33 +500,37 @@ class Menu:
         surf = font.render(label, True, text_color)
         self.screen.blit(surf, surf.get_rect(center=rect.center))
 
-    def _piece_icon(self, center, key, color, active):
+    def _piece_icon(self, center, key, color, active, tint=None):
         """Small king preview of piece-set ``key`` drawn in ``color``'s art,
-        shared by the closed dropdown button and its option rows."""
+        shared by the closed dropdown button and its option rows. ``tint`` is
+        this team's *currently edited* colour (not yet applied to the theme)
+        -- passed through to ``pieces.render_token`` so a tinted set's preview
+        (neon/tiger/cthulhu/dragon) follows a swatch pick or team swap live,
+        instead of showing the stale colour from the last-started game."""
         if key == "unicode":
             ink = (20, 20, 20) if active else theme.TEXT
             glyph = self.font_glyph.render(theme.GLYPH[chess.KING], True, ink)
             self.screen.blit(glyph, glyph.get_rect(center=center))
         else:
-            glow = theme.team_neon(color) if key == "neon" else None
-            tok = pieces.render_token(key, chess.KING, color, 26, glow=glow)
+            glow = tint if key == "neon" else None
+            tok = pieces.render_token(key, chess.KING, color, 26, glow=glow, tint=tint)
             self.screen.blit(tok, tok.get_rect(center=center))
 
-    def _draw_piece_dropdown(self, rect, selected, color, open_):
+    def _draw_piece_dropdown(self, rect, selected, color, open_, tint=None):
         """The closed-state button for one team's piece-set picker: a preview
         icon, the current set's name, and a caret. Click toggles the option
         list open (``_draw_piece_options`` draws it, directly below)."""
         pygame.draw.rect(self.screen, theme.PANEL_BG, rect, border_radius=8)
         border = theme.ACCENT if open_ else theme.TEXT_DIM
         pygame.draw.rect(self.screen, border, rect, width=2, border_radius=8)
-        self._piece_icon((rect.x + 22, rect.centery), selected, color, False)
+        self._piece_icon((rect.x + 22, rect.centery), selected, color, False, tint=tint)
         label = dict(pieces.PIECE_SETS)[selected]
         s = self.font_small.render(label, True, theme.TEXT)
         self.screen.blit(s, (rect.x + 42, rect.centery - s.get_height() // 2))
-        caret = self.font_small.render("▴" if open_ else "▾", True, theme.TEXT_DIM)
+        caret = self.font_symbol_small.render("▴" if open_ else "▾", True, theme.TEXT_DIM)
         self.screen.blit(caret, caret.get_rect(midright=(rect.right - 8, rect.centery)))
 
-    def _draw_piece_options(self, dropdown_rect, selected, color):
+    def _draw_piece_options(self, dropdown_rect, selected, color, tint=None):
         """The open option list under a piece-set dropdown -- one row per
         available set, highlighted when it's the current selection."""
         for key, label in pieces.PIECE_SETS:
@@ -533,7 +539,7 @@ class Menu:
             bg = theme.ACCENT if active else theme.PANEL_BG
             pygame.draw.rect(self.screen, bg, rect)
             pygame.draw.rect(self.screen, theme.TEXT_DIM, rect, width=1)
-            self._piece_icon((rect.x + 22, rect.centery), key, color, active)
+            self._piece_icon((rect.x + 22, rect.centery), key, color, active, tint=tint)
             text_color = (20, 20, 20) if active else theme.TEXT
             s = self.font_small.render(label, True, text_color)
             self.screen.blit(s, (rect.x + 42, rect.centery - s.get_height() // 2))
@@ -562,13 +568,6 @@ class Menu:
         title = self.font_title.render(title_text, True, theme.TEXT)
         self.screen.blit(title, title.get_rect(center=(w // 2, 70)))
 
-        caption = self.font_small.render(
-            "Collapse mode -- what happens to the rest of a piece's ghosts on a 'not here' result:",
-            True, theme.TEXT_DIM)
-        self.screen.blit(caption, caption.get_rect(center=(w // 2, self.collapse_full_rect.y - 18)))
-        self._button(self.collapse_full_rect, "Full", self.collapse_mode == CollapseMode.FULL)
-        self._button(self.collapse_partial_rect, "Partial", self.collapse_mode == CollapseMode.PARTIAL)
-
         dial_rects = self._dial_rects()
         self._draw_dial_tree(dial_rects)
         for key, label, active in self._dial_specs():
@@ -583,17 +582,22 @@ class Menu:
         self.screen.blit(names_caption, names_caption.get_rect(center=(w // 2, self.white_name_rect.y - 16)))
         self._name_field(self.white_name_rect, self.white_name, self.active_field == "white_name")
         self._name_field(self.black_name_rect, self.black_name, self.active_field == "black_name")
-        self._button(self.swap_rect, "⇄", False)
+        self._button(self.swap_rect, "⇄", False, font=self.font_symbol)
 
         teams_caption_text = ("Piece set & team colours:" if self.theme_name == "cyberpunk"
                               else "Piece set (each team picks its own):")
         teams_caption = self.font_small.render(teams_caption_text, True, theme.TEXT_DIM)
         self.screen.blit(teams_caption, teams_caption.get_rect(
             center=(w // 2, self.white_piece_dropdown_rect.y - 16)))
+        # Origin has no colour picker -- its tinted sets always render in
+        # fixed black/white (see theme._origin_palette), so the preview only
+        # follows the live-edited team colour in Cyberpunk.
+        white_tint = self.white_color if self.theme_name == "cyberpunk" else None
+        black_tint = self.black_color if self.theme_name == "cyberpunk" else None
         self._draw_piece_dropdown(self.white_piece_dropdown_rect, self.white_piece_set,
-                                  chess.WHITE, self.white_piece_open)
+                                  chess.WHITE, self.white_piece_open, tint=white_tint)
         self._draw_piece_dropdown(self.black_piece_dropdown_rect, self.black_piece_set,
-                                  chess.BLACK, self.black_piece_open)
+                                  chess.BLACK, self.black_piece_open, tint=black_tint)
         if self.theme_name == "cyberpunk":
             self._swatches(self.white_swatch_rects, self.white_color)
             self._swatches(self.black_swatch_rects, self.black_color)
@@ -617,9 +621,11 @@ class Menu:
         # Open piece-set option lists are drawn last so they overlay whatever
         # they happen to span (they're modal -- see handle_click).
         if self.white_piece_open:
-            self._draw_piece_options(self.white_piece_dropdown_rect, self.white_piece_set, chess.WHITE)
+            self._draw_piece_options(self.white_piece_dropdown_rect, self.white_piece_set,
+                                     chess.WHITE, tint=white_tint)
         if self.black_piece_open:
-            self._draw_piece_options(self.black_piece_dropdown_rect, self.black_piece_set, chess.BLACK)
+            self._draw_piece_options(self.black_piece_dropdown_rect, self.black_piece_set,
+                                     chess.BLACK, tint=black_tint)
 
         # A mouseover tooltip explaining whatever's under the cursor, drawn
         # dead last so it floats over everything else.
@@ -669,20 +675,15 @@ class Menu:
         self.screen.blit(box, (x, y))
 
     def _draw_hover_tooltips(self, dial_rects):
-        """Show one info tooltip for whichever collapse-mode or dial button
-        the mouse currently sits over, if any. Uses ``present.to_logical`` to
-        map the real cursor position onto this menu's own (base-resolution)
+        """Show one info tooltip for whichever dial button the mouse
+        currently sits over, if any. Uses ``present.to_logical`` to map the
+        real cursor position onto this menu's own (base-resolution)
         coordinate space, same as a click would be -- one frame stale at
         worst, since ``present`` records the mapping from the previous
         ``present()`` call."""
         pos = present.to_logical(pygame.mouse.get_pos())
-        targets = [
-            (self.collapse_full_rect, _COLLAPSE_TOOLTIPS[CollapseMode.FULL]),
-            (self.collapse_partial_rect, _COLLAPSE_TOOLTIPS[CollapseMode.PARTIAL]),
-        ]
-        for key, rect in dial_rects.items():
-            if key in _DIAL_TOOLTIPS:
-                targets.append((rect, _DIAL_TOOLTIPS[key]))
+        targets = [(rect, _DIAL_TOOLTIPS[key]) for key, rect in dial_rects.items()
+                  if key in _DIAL_TOOLTIPS]
         for rect, text in targets:
             if rect.collidepoint(pos):
                 self._draw_tooltip(text, rect)

@@ -102,9 +102,18 @@ The single place that turns a `(ptype, color)` into board art.
 A set is either **literal** (SVGs drawn as-is: cburnett/merida) or **tinted**
 (`_TINTED`, a `{set -> base set supplying the shapes}` map: neon borrows cburnett's
 silhouettes, tiger/cthulhu/dragon have their own) — `render_art` recolours a tinted set to
-`theme.team_neon(color)`. Recolouring is numpy-free (`_recolor`): `BLEND_RGBA_MAX`
+`theme.team_neon(color)`, unless its optional `tint` override is given (see below).
+Recolouring is numpy-free (`_recolor`): `BLEND_RGBA_MAX`
 floods rgb to white keeping each pixel's alpha, then `BLEND_RGBA_MULT` stamps that
 alpha onto a flat colour fill.
+
+`WHITE_NEON`/`BLACK_NEON` are fixed to Origin's own white/black token colours on that
+theme — Origin has no colour picker, so a tinted set always renders plain black-vs-white
+there; only Cyberpunk derives them from each player's chosen swatch. `render_art`/
+`render_token` also take an optional `tint` (an RGB tuple, bypassing `theme.team_neon`
+entirely) — the settings menu's piece-set dropdown passes the *live-edited* team colour
+through it, so a tinted set's preview icon follows a swatch pick or a team swap
+immediately, instead of showing whatever colour was last applied to the running game.
 
 `render_token` composites a soft drop shadow (classic sets), a coloured glow (neon), or
 a **contrast rim** (tiger, cthulhu, dragon) via `gaussian_blur`, cached.
@@ -405,7 +414,7 @@ Pre-game dial picker: collapse mode, splitting, split stay, mass moves, mass spl
 seed, board theme, team names, team colours, per-team piece sets.
 
 **The dial toggles are laid out as a small dependency tree, not a flat row.** `_DIAL_PARENT` maps
-each non-root dial to the one it needs (`split_stay`/`mass` → `split`; `mass_split`/
+each non-root dial to the one it needs (`collapse`/`split_stay`/`mass` → `split`; `mass_split`/
 `mass_all_must_act` → `mass`). `_dial_rows` groups the currently-visible keys into levels (root
 first, each level exactly the children of the previous one — see `_DIAL_PARENT`); `_dial_rects`
 lays each level out centered under its own parent's x-position (not the whole screen), so the tree
@@ -417,6 +426,13 @@ clickable**, not merely dimmed. Everything below the tree reserves fixed vertica
 tallest possible shape (3 levels) so lower sections never have to move as dials toggle. Toggling a
 dial off **cascades** the reset onto anything depending on it, and `_build_config` re-applies the
 same AND-gating defensively.
+
+**Collapse mode** (`collapse_mode`, `Full`/`Partial`) is a child of `split`, not a standalone
+top-level control — a piece can only ever end up superposed via a split, so the choice is
+meaningless (and hidden) whenever splitting is off. Unlike the other dials it isn't a plain on/off:
+its single button cycles between the two `CollapseMode` values on each click, showing the current
+one in its label (`f"Collapse: {'Full' if ... else 'Partial'}"`), same pattern as `_dial_specs`
+uses for every other toggle.
 
 **Split stay** (`split_stay_enabled`, default on) governs whether a split may offer the ghost's
 own square as one of its two destinations — the "stay + move" split (see `app.py` below and
@@ -440,10 +456,10 @@ dials don't conflict.
 **Mouseover tooltips.** `_draw_hover_tooltips` (called last in `draw`) maps the real cursor position
 onto the menu's own coordinate space via `present.to_logical(pygame.mouse.get_pos())` — one frame
 stale at worst, since `present` records the mapping from the *previous* `present()` call — and,
-if it lands on the collapse-mode buttons or any visible dial, renders a word-wrapped info box
+if it lands on any visible dial (including collapse mode), renders a word-wrapped info box
 (`_draw_tooltip`/`_wrap_text`) explaining that control, placed just below it (above if that would
-run off the bottom of the screen). Copy lives in flat `_DIAL_TOOLTIPS`/`_COLLAPSE_TOOLTIPS` dicts,
-independent of the on/off-state label text in `_dial_specs`.
+run off the bottom of the screen). Copy lives in a flat `_DIAL_TOOLTIPS` dict, independent of the
+on/off-state label text in `_dial_specs`.
 
 **Team fields.** Names are click-to-focus text inputs (`active_field` + `handle_keydown`, wired
 from the caller's event loop). Below the names, each side gets a **piece-set dropdown**
